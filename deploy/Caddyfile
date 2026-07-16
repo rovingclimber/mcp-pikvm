@@ -1,0 +1,10 @@
+# MCP_PUBLIC_HOST is set by scripts/setup-docker-compose.sh. Caddy obtains and
+# renews the certificate automatically, then proxies only to the private Docker
+# network service. Do not point this at an IP address or a local-only hostname.
+{$MCP_PUBLIC_HOST} {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+    }
+    reverse_proxy pikvm-mcp:8000
+}

@@ -1,5 +1,0 @@
-# Set MCP_PUBLIC_HOST to a DNS name whose certificate Caddy can obtain.
-# Do not publish port 8000 from the PiKVM MCP container in this deployment.
-{$MCP_PUBLIC_HOST} {
-    reverse_proxy pikvm-mcp:8000
-}

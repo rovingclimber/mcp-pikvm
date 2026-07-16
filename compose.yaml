@@ -1,6 +1,5 @@
 services:
   pikvm-mcp:
-    build: .
     image: rovingclimber/mcp-pikvm:latest
     init: true
     restart: unless-stopped
