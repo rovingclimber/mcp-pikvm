@@ -29,19 +29,85 @@ Before starting, create a Cloudflare API token scoped only to the DNS zone used 
 
 Point a DNS record such as `mcp.example.com` at your Docker host's private address for your own network. The record need not be Internet-routable for DNS-01 validation.
 
-On the Docker host:
+Create an empty folder called `mcp-pikvm`, then save these two files inside it. Replace every `replace-me` value in `.env`; generate the bearer token with `openssl rand -base64 32`.
 
-```sh
-curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/main/scripts/setup-docker-compose.sh
-less setup-docker-compose.sh
-sh setup-docker-compose.sh
+`compose.yaml`:
+
+```yaml
+services:
+  pikvm-mcp:
+    image: rovingclimber/mcp-pikvm:0.6.2
+    restart: unless-stopped
+    env_file: .env
+    # Kept private: Traefik reaches this container on Docker's own network.
+    ports:
+      - "127.0.0.1:8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.pikvm.rule: "Host(`${MCP_PUBLIC_HOST}`)"
+      traefik.http.routers.pikvm.entrypoints: websecure
+      traefik.http.routers.pikvm.tls: "true"
+      traefik.http.routers.pikvm.tls.certresolver: cloudflare
+      traefik.http.services.pikvm.loadbalancer.server.port: "8000"
+
+  traefik:
+    image: traefik:v3
+    restart: unless-stopped
+    depends_on:
+      - pikvm-mcp
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.cloudflare.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.cloudflare.acme.storage=/data/acme.json
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-data:/data
+
+volumes:
+  traefik-data:
 ```
 
-Choose the default **HTTPS with Cloudflare DNS-01** option. The script creates `mcp-pikvm/.env` with mode `600`; it contains your PiKVM password, MCP bearer token, and Cloudflare API token. It is ignored by Git. Then start it using the command printed by the script:
+`compose.https.yaml` is provided in this repository as an alternative modular version of the same setup. The standalone file above is the easiest path for a new deployment.
+
+`.env`:
+
+```dotenv
+PIKVM_URL=https://192.168.1.50
+PIKVM_USERNAME=admin
+PIKVM_PASSWORD=replace-me
+PIKVM_TLS_VERIFY=true
+MCP_HTTP_BEARER_TOKEN=replace-with-a-random-32-character-or-longer-token
+MCP_HOST=0.0.0.0
+MCP_PORT=8000
+MCP_STREAMABLE_HTTP_PATH=/mcp
+MCP_HTTP_ALLOWED_HOSTS=mcp.example.com,localhost:8000,127.0.0.1:8000
+MCP_HTTP_ALLOWED_ORIGINS=
+MCP_PUBLIC_HOST=mcp.example.com
+ACME_EMAIL=you@example.com
+CF_DNS_API_TOKEN=replace-with-your-zone-scoped-token
+```
+
+Keep `.env` private (`chmod 600 .env` on Linux), then start it:
 
 ```sh
-cd mcp-pikvm
-docker compose -f compose.yaml -f compose.https.yaml up -d
+docker compose up -d
 ```
 
 Traefik is the small companion container that obtains and renews the certificate. The PiKVM MCP container remains separate; it has no Docker socket access. Traefik needs a read-only Docker socket so it can route HTTPS traffic to this one service.
@@ -87,13 +153,13 @@ For an operator-assisted task, retrieve the temporary view/control tokens from D
 
 ## Trusted-LAN HTTP instead
 
-The setup script also offers an HTTP option. Choose it only for an intentionally trusted, segmented LAN. It listens on port 8000 and gives an address such as:
+Choose HTTP only for an intentionally trusted, segmented LAN. It listens on port 8000 and gives an address such as:
 
 ```text
 http://192.168.1.139:8000/mcp
 ```
 
-For a manual setup, copy [`.env.example`](.env.example) to `.env`, populate it, set `MCP_BIND_ADDRESS` and `MCP_HTTP_ALLOWED_HOSTS` to your intended LAN host, then run:
+Use the repository's [`compose.yaml`](compose.yaml) and [`.env.example`](.env.example), set `MCP_BIND_ADDRESS=0.0.0.0` and `MCP_HTTP_ALLOWED_HOSTS` to your intended LAN host, then run:
 
 ```sh
 docker compose up -d
@@ -125,7 +191,7 @@ Read the release notes first. Container restart means new view/control tokens, w
 
 v0.6 is intentionally a clean break: it removes the admin page, encrypted runtime configuration, and `secrets/` directory. Do **not** pull the new image into an old Compose directory and expect it to retain those settings.
 
-Instead, make a new deployment directory with the setup script, complete the new `.env`, update the bearer-token environment variable on the Codex computer, then stop the old service before starting the new one. The new container will create fresh view and control tokens on its first start.
+Instead, make a new deployment directory with the Compose example above, complete the new `.env`, update the bearer-token environment variable on the Codex computer, then stop the old service before starting the new one. The new container will create fresh view and control tokens on its first start.
 
 ## Development
 
