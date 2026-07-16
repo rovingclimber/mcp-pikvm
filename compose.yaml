@@ -1,0 +1,35 @@
+services:
+  pikvm-mcp:
+    build: .
+    image: rovingclimber/mcp-pikvm:latest
+    init: true
+    restart: unless-stopped
+    env_file:
+      - ./secrets/pikvm-mcp.env
+    environment:
+      PIKVM_PASSWORD_FILE: /run/secrets/pikvm_password
+      PIKVM_MCP_CONTROL_SECRET_FILE: /run/secrets/pikvm_control_secret
+      MCP_HTTP_BEARER_TOKEN_FILE: /run/secrets/mcp_http_bearer_token
+    secrets:
+      - pikvm_password
+      - pikvm_control_secret
+      - mcp_http_bearer_token
+    # Localhost-only by default. Put a TLS reverse proxy in front before making
+    # the service available to another machine or network.
+    ports:
+      - "127.0.0.1:8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+secrets:
+  pikvm_password:
+    file: ./secrets/pikvm_password.txt
+  pikvm_control_secret:
+    file: ./secrets/pikvm_control_secret.txt
+  mcp_http_bearer_token:
+    file: ./secrets/mcp_http_bearer_token.txt

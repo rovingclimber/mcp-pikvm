@@ -1,0 +1,11 @@
+.git
+.agents
+.codex
+.env
+.venv
+__pycache__
+.pytest_cache
+*.py[cod]
+audit.jsonl
+secrets
+tests
