@@ -22,7 +22,10 @@ copy_secret MCP_ADMIN_TOKEN
 copy_secret MCP_CONFIG_ENCRYPTION_KEY
 
 mkdir -p /var/lib/pikvm-mcp
+# The named volume is owned by the unprivileged service after first boot. Its
+# restrictive mode persists; a capability-restricted root entrypoint cannot
+# change that mode on later starts and does not need to.
+chmod 0700 /var/lib/pikvm-mcp 2>/dev/null || true
 chown pikvm:pikvm /var/lib/pikvm-mcp
-chmod 0700 /var/lib/pikvm-mcp
 
 exec su-exec pikvm:pikvm pikvm-local-mcp "$@"

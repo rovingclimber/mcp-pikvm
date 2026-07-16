@@ -600,6 +600,11 @@ def main() -> None:
 
     import uvicorn
 
+    def run_admin_listener(admin_app: Any, host: str, port: int) -> None:
+        """Run a separate ASGI server explicitly; do not reuse the MCP app."""
+        server = uvicorn.Server(uvicorn.Config(admin_app, host=host, port=port, log_level="info"))
+        server.run()
+
     # The optional admin plane is a second listener in the same container, not
     # a second image or a Docker-socket-backed management service. Compose only
     # publishes it to loopback by default. Older deployments without its
@@ -613,8 +618,8 @@ def main() -> None:
         if not admin_host or not 1 <= admin_port <= 65535:
             raise ConfigurationError("MCP_ADMIN_HOST must be set and MCP_ADMIN_PORT must be between 1 and 65535.")
         thread = threading.Thread(
-            target=uvicorn.run,
-            kwargs={"app": create_admin_app(_runtime), "host": admin_host, "port": admin_port, "log_level": "info"},
+            target=run_admin_listener,
+            args=(create_admin_app(_runtime), admin_host, admin_port),
             daemon=True,
             name="pikvm-mcp-admin",
         )
