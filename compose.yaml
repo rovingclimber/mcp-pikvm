@@ -18,6 +18,8 @@ services:
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "8000"
       MCP_STREAMABLE_HTTP_PATH: "/mcp"
+      # CHANGE ME: the exact URL you will paste into your MCP client.
+      MCP_PUBLIC_ENDPOINT: "https://mcp.example.com/mcp"
       # CHANGE ME: the exact DNS name below, not a CIDR network.
       MCP_HTTP_ALLOWED_HOSTS: "mcp.example.com"
       MCP_HTTP_ALLOWED_ORIGINS: ""

@@ -18,6 +18,8 @@ services:
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "8000"
       MCP_STREAMABLE_HTTP_PATH: "/mcp"
+      # CHANGE ME: the exact URL you will paste into your MCP client.
+      MCP_PUBLIC_ENDPOINT: "http://192.168.1.139:8000/mcp"
       # CHANGE ME: this is the Docker host's actual LAN IP or hostname;
       # it is not a CIDR network.
       MCP_HTTP_ALLOWED_HOSTS: "192.168.1.139:8000"

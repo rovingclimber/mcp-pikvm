@@ -37,7 +37,7 @@ curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.7.0/com
 Open `compose.yaml` and replace every `CHANGE ME` value. In particular:
 
 1. Add the PiKVM URL, username and password.
-2. Replace both `mcp.example.com` occurrences with your DNS name.
+2. Replace all `mcp.example.com` occurrences with your DNS name, including `MCP_PUBLIC_ENDPOINT`.
 3. Change the Traefik `ipallowlist` CIDR to your own LAN, for example `192.168.1.0/24`.
 4. Add the Cloudflare token and certificate-notification email.
 
@@ -54,7 +54,7 @@ docker compose up -d
 docker compose logs pikvm-mcp
 ```
 
-The second command displays the temporary view/control tokens. The MCP endpoint is:
+The second command displays the exact MCP endpoint and the temporary view/control tokens. The HTTPS endpoint normally looks like:
 
 ```text
 https://mcp.example.com/mcp

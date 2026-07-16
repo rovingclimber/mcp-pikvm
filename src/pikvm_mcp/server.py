@@ -10,6 +10,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -106,7 +107,21 @@ def _listener_settings() -> tuple[str, int, str]:
     return host, port, path
 
 
+def _public_endpoint(path: str) -> str | None:
+    """Return the operator-facing endpoint for startup logs, if configured."""
+    value = os.getenv("MCP_PUBLIC_ENDPOINT", "").strip().rstrip("/")
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.query or parsed.fragment:
+        raise ConfigurationError("MCP_PUBLIC_ENDPOINT must be an absolute HTTP(S) URL without query or fragment.")
+    if parsed.path != path:
+        raise ConfigurationError("MCP_PUBLIC_ENDPOINT must use the same path as MCP_STREAMABLE_HTTP_PATH.")
+    return value
+
+
 _http_host, _http_port, _http_path = _listener_settings()
+_public_endpoint_url = _public_endpoint(_http_path)
 mcp = FastMCP("PiKVM Local", instructions=(
     "This is a local-only PiKVM bridge. Inspect status before control operations and inspect HID status "
     "before diagnosing input. Never use the view or control token without the operator's explicit instruction. "
@@ -596,6 +611,8 @@ def main() -> None:
         raise ConfigurationError("MCP_TRANSPORT must be stdio or streamable-http.")
 
     settings = HttpSettings.from_environment()
+    if _public_endpoint_url:
+        logging.warning("PiKVM MCP endpoint: %s", _public_endpoint_url)
     # The MCP SDK performs Host validation before protocol handling. A missing
     # Origin is allowed for native clients; any browser Origin needs an exact
     # explicit allow-list entry in addition to the bearer token.
