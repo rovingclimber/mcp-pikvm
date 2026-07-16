@@ -50,6 +50,14 @@ safe_value() {
     case "$1" in ''|*"$(printf '\n')"*|*"$(printf '\r')"*) return 1 ;; *) return 0 ;; esac
 }
 
+env_quote() {
+    # Docker Compose treats single-quoted dotenv values literally. Escape the
+    # one special character so ordinary passwords may contain $, # and spaces.
+    printf "'"
+    printf '%s' "$1" | sed "s/'/\\\\'/g"
+    printf "'"
+}
+
 mkdir -p "$target_dir"
 fetch compose.yaml "$target_dir/compose.yaml"
 fetch compose.https.yaml "$target_dir/compose.https.yaml"
@@ -95,20 +103,20 @@ for value in "$pikvm_url" "$pikvm_user" "$pikvm_password" "$public_host" "$acme_
 done
 
 cat > "$target_dir/.env" <<EOF
-PIKVM_URL=$pikvm_url
-PIKVM_USERNAME=$pikvm_user
-PIKVM_PASSWORD=$pikvm_password
+PIKVM_URL=$(env_quote "$pikvm_url")
+PIKVM_USERNAME=$(env_quote "$pikvm_user")
+PIKVM_PASSWORD=$(env_quote "$pikvm_password")
 PIKVM_TLS_VERIFY=true
-MCP_HTTP_BEARER_TOKEN=$bearer_token
+MCP_HTTP_BEARER_TOKEN=$(env_quote "$bearer_token")
 MCP_HOST=0.0.0.0
 MCP_PORT=8000
 MCP_STREAMABLE_HTTP_PATH=/mcp
 MCP_BIND_ADDRESS=$bind_address
-MCP_HTTP_ALLOWED_HOSTS=$allowed_hosts
+MCP_HTTP_ALLOWED_HOSTS=$(env_quote "$allowed_hosts")
 MCP_HTTP_ALLOWED_ORIGINS=
-MCP_PUBLIC_HOST=$public_host
-ACME_EMAIL=$acme_email
-CF_DNS_API_TOKEN=$cf_token
+MCP_PUBLIC_HOST=$(env_quote "$public_host")
+ACME_EMAIL=$(env_quote "$acme_email")
+CF_DNS_API_TOKEN=$(env_quote "$cf_token")
 EOF
 chmod 600 "$target_dir/.env"
 

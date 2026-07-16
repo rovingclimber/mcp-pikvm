@@ -69,7 +69,7 @@ https://mcp.example.com/mcp
 In PowerShell on the Windows PC, create a Windows-user environment variable holding the bearer token. If you can SSH to the Docker host, replace the host and path below with your own deployment:
 
 ```powershell
-$token = (ssh user@docker-host "cat /path/to/mcp-pikvm/.env" | Select-String '^MCP_HTTP_BEARER_TOKEN=').ToString().Split('=', 2)[1]
+$token = (ssh user@docker-host "sed -n 's/^MCP_HTTP_BEARER_TOKEN=//p' /path/to/mcp-pikvm/.env").Trim()
 [Environment]::SetEnvironmentVariable('PIKVM_MCP_BEARER_TOKEN', $token, 'User')
 Remove-Variable token
 ```
