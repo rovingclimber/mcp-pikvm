@@ -1,14 +1,32 @@
+# Edit the values marked CHANGE ME, then run: docker compose up -d
+# Do not commit your edited copy: it contains PiKVM and MCP credentials.
 services:
   pikvm-mcp:
-    image: rovingclimber/mcp-pikvm:latest
+    image: rovingclimber/mcp-pikvm:0.6.3
     init: true
     restart: unless-stopped
-    env_file:
-      - .env
-    # The ordinary setup is a trusted-LAN HTTP endpoint. Set this to your
-    # server's LAN IP (or 0.0.0.0) only when that is intentional.
+    environment:
+      # --- PiKVM connection (CHANGE ME) ---
+      PIKVM_URL: "https://192.168.1.50"
+      PIKVM_USERNAME: "admin"
+      PIKVM_PASSWORD: "CHANGE-ME"
+      PIKVM_TLS_VERIFY: "true"
+
+      # --- MCP connection (CHANGE ME) ---
+      # Generate with: openssl rand -base64 32
+      MCP_HTTP_BEARER_TOKEN: "CHANGE-ME-USE-A-LONG-RANDOM-TOKEN"
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8000"
+      MCP_STREAMABLE_HTTP_PATH: "/mcp"
+
+      # The basic Compose file is localhost-only. For HTTPS, replace the
+      # first value with your DNS name (for example mcp.example.com). For
+      # trusted-LAN HTTP, change both this list and the published address below.
+      MCP_HTTP_ALLOWED_HOSTS: "localhost:8000,127.0.0.1:8000,[::1]:8000"
+      MCP_HTTP_ALLOWED_ORIGINS: ""
+
     ports:
-      - "${MCP_BIND_ADDRESS:-127.0.0.1}:8000:8000"
+      - "127.0.0.1:8000:8000"
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
