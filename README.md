@@ -93,7 +93,7 @@ This is the usual arrangement when Docker and PiKVM MCP run in an LXC, while Cod
    ```
 
    For the LXC trusted-LAN test deployment, the URL would be `http://192.168.1.139:8000/mcp`. The command stores the **environment-variable name**, not its value.
-5. Start a **new Codex task**. Ask it to call `pikvm_status` first, then `pikvm_screenshot` if you enabled screen capture. It should show the PiKVM tools once the connection succeeds.
+5. Start a **new Codex task**. Type `/mcp` to check that `pikvm-lan` is connected, then ask it to call `pikvm_status` first and `pikvm_screenshot` if you enabled screen capture.
 
 If you want PiKVM to be available only while working in one trusted repository, add the same entry to that repository's `.codex/config.toml` instead of using `codex mcp add`:
 
