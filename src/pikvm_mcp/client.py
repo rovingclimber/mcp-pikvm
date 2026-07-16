@@ -62,7 +62,9 @@ class PiKVMClient:
         return self.request("POST", "/api/atx/power", params={"action": action, "wait": "true"})
 
     def type_text(self, text: str) -> Any:
-        return self.request("POST", "/api/hid/print", params={"keymap": ""}, content=text)
+        # PiKVM selects its configured default keymap when this parameter is
+        # absent. Some versions reject an explicit empty keymap with HTTP 400.
+        return self.request("POST", "/api/hid/print", content=text)
 
     def send_shortcut(self, keys: list[str]) -> Any:
         return self.request("POST", "/api/hid/events/send_shortcut", params={"keys": ",".join(keys)})
