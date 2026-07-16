@@ -135,6 +135,22 @@ docker run --rm -i --env-file .env -e MCP_TRANSPORT=stdio rovingclimber/mcp-pikv
 
 Screens are disabled by default. Set `PIKVM_MCP_SCREEN_CAPTURE_ENABLED=1` only when a connected client should receive screen content. `pikvm_screenshot` returns JPEG content directly through MCP; `pikvm_click_screen` translates normalized screenshot coordinates into PiKVM absolute HID coordinates.
 
+### Input modes and BIOS repair
+
+- `pikvm_type_text` uses PiKVM's text endpoint. Set `press_enter=true` only when the operator has explicitly asked to submit that text.
+- `pikvm_press_key` is the reliable choice for a single BIOS/UEFI key such as `F2`, `Delete`, `Enter`, `Escape`, or an arrow key; it presses and releases the key in one operation.
+- `pikvm_send_shortcut` is for combinations such as `ControlLeft` + `AltLeft` + `Delete`.
+- `pikvm_set_mouse_mode` selects `absolute` for desktop click-on-screenshot work or `relative` for BIOS/UEFI. Then use `pikvm_move_mouse_relative` and `pikvm_click_mouse` in firmware screens.
+- If `pikvm_status` reports keyboard or mouse HID as offline, use the explicitly confirmed `pikvm_set_hid_connection` action. `pikvm_reset_hid` releases any stuck input state.
+
+Not every PiKVM model/configuration exposes a relative mouse output. The tools report the PiKVM API error rather than guessing; enable PiKVM's relative/dual mouse support in its own configuration if necessary. See the [PiKVM mouse guide](https://docs.pikvm.org/mouse/).
+
+### Safe virtual media
+
+`pikvm_list_iso_images` provides a read-only list of ISOs already stored on the PiKVM. `pikvm_mount_iso` only accepts an ISO from that current list, mounts it read-only as a virtual CD-ROM, and requires `CONFIRM MOUNT <image>`. `pikvm_eject_media` requires `CONFIRM EJECT MEDIA`.
+
+This server deliberately does not upload, download, delete, or fetch media from arbitrary URLs. Stage trusted ISOs through the PiKVM web interface or your own managed process, then use the MCP tools to inspect and mount them.
+
 ## Development
 
 ```sh

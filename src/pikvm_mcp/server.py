@@ -85,8 +85,9 @@ def _listener_settings() -> tuple[str, int, str]:
 
 _http_host, _http_port, _http_path = _listener_settings()
 mcp = FastMCP("PiKVM Local", instructions=(
-    "This is a local-only PiKVM bridge. Inspect status before control operations. "
-    "Never enable or use control without the operator's explicit instruction."
+    "This is a local-only PiKVM bridge. Inspect status before control operations and inspect HID status "
+    "before diagnosing input. Never enable or use control without the operator's explicit instruction. "
+    "Use discrete key presses for BIOS navigation; switch to relative mouse mode for BIOS/UEFI only when asked."
 ), host=_http_host, port=_http_port, streamable_http_path=_http_path)
 
 _settings: Settings | None = None
@@ -247,14 +248,34 @@ def pikvm_atx_power(action: str, control_token: str, confirmation: str) -> dict[
 
 
 @mcp.tool()
-def pikvm_type_text(text: str, control_token: str) -> dict[str, Any]:
-    """Type a short, single-line text string on the target PC. Requires an active control lease."""
+def pikvm_type_text(text: str, control_token: str, press_enter: bool = False) -> dict[str, Any]:
+    """Type a short single-line string using PiKVM's text endpoint. Set press_enter=true only when the operator wants the command submitted."""
     try:
         if not text or len(text) > 512 or "\n" in text or "\r" in text:
             raise ValueError("Text must be a non-empty single line of at most 512 characters.")
         settings = _require_control(control_token)
         result = _client().type_text(text)
-        audit("text_typed", {"length": len(text), "sha256_prefix": content_fingerprint(text)}, settings.audit_log)
+        if press_enter:
+            _client().press_key("Enter")
+        audit(
+            "text_typed",
+            {"length": len(text), "sha256_prefix": content_fingerprint(text), "press_enter": press_enter},
+            settings.audit_log,
+        )
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_press_key(key: str, control_token: str) -> dict[str, Any]:
+    """Press and release one named PiKVM HID key, such as Enter, Escape, ArrowDown, F2, or Delete. Prefer this for BIOS/UEFI navigation."""
+    try:
+        if key not in _ALLOWED_KEY_NAMES:
+            raise ValueError("Use a supported PiKVM web key name.")
+        settings = _require_control(control_token)
+        result = _client().press_key(key)
+        audit("key_pressed", {"key": key}, settings.audit_log)
         return {"ok": True, "result": result}
     except Exception as exc:
         return _safe_error(exc)
@@ -269,6 +290,153 @@ def pikvm_send_shortcut(keys: list[str], control_token: str) -> dict[str, Any]:
         settings = _require_control(control_token)
         result = _client().send_shortcut(keys)
         audit("shortcut_sent", {"keys": keys}, settings.audit_log)
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_set_hid_connection(connected: bool, control_token: str, confirmation: str) -> dict[str, Any]:
+    """Connect or disconnect PiKVM keyboard/mouse USB HID. Use when HID status says offline. Confirmation: CONFIRM HID CONNECT or CONFIRM HID DISCONNECT."""
+    try:
+        expected = "CONFIRM HID CONNECT" if connected else "CONFIRM HID DISCONNECT"
+        if confirmation != expected:
+            raise PermissionError(f"Confirmation must be exactly: {expected}")
+        settings = _require_control(control_token)
+        result = _client().set_hid_connected(connected)
+        audit("hid_connection_changed", {"connected": connected}, settings.audit_log)
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_reset_hid(control_token: str, confirmation: str) -> dict[str, Any]:
+    """Release/reset PiKVM HID devices when a key or mouse button may be stuck. Requires confirmation CONFIRM HID RESET."""
+    try:
+        if confirmation != "CONFIRM HID RESET":
+            raise PermissionError("Confirmation must be exactly: CONFIRM HID RESET")
+        settings = _require_control(control_token)
+        result = _client().reset_hid()
+        audit("hid_reset", {}, settings.audit_log)
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_set_mouse_mode(mode: str, control_token: str, confirmation: str) -> dict[str, Any]:
+    """Switch PiKVM mouse between absolute (desktop) and relative (BIOS/UEFI) mode. Requires confirmation CONFIRM MOUSE MODE <mode>."""
+    try:
+        if mode not in {"absolute", "relative"}:
+            raise ValueError("Mouse mode must be absolute or relative.")
+        expected = f"CONFIRM MOUSE MODE {mode}"
+        if confirmation != expected:
+            raise PermissionError(f"Confirmation must be exactly: {expected}")
+        settings = _require_control(control_token)
+        result = _client().set_mouse_mode(mode)
+        audit("mouse_mode_changed", {"mode": mode}, settings.audit_log)
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_move_mouse_relative(delta_x: int, delta_y: int, control_token: str) -> dict[str, Any]:
+    """Move the relative mouse by a small offset for BIOS/UEFI. Use after selecting relative mouse mode; each delta must be from -2000 to 2000."""
+    try:
+        if not -2000 <= delta_x <= 2000 or not -2000 <= delta_y <= 2000:
+            raise ValueError("Relative mouse deltas must each be between -2000 and 2000.")
+        settings = _require_control(control_token)
+        result = _client().move_mouse_relative(delta_x, delta_y)
+        audit("mouse_moved_relative", {"delta_x": delta_x, "delta_y": delta_y}, settings.audit_log)
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_click_mouse(button: str, control_token: str) -> dict[str, Any]:
+    """Click left, middle, or right mouse button at the current cursor position. Useful in relative mouse mode."""
+    try:
+        if button not in {"left", "middle", "right"}:
+            raise ValueError("Mouse button must be left, middle, or right.")
+        settings = _require_control(control_token)
+        client = _client()
+        client.set_mouse_button(button, True)
+        result = client.set_mouse_button(button, False)
+        audit("mouse_clicked", {"button": button}, settings.audit_log)
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_scroll_mouse(delta_y: int, control_token: str) -> dict[str, Any]:
+    """Scroll the current view using a signed wheel delta from -100 to 100. Positive/negative direction depends on the target OS."""
+    try:
+        if not -100 <= delta_y <= 100:
+            raise ValueError("Mouse wheel delta must be between -100 and 100.")
+        settings = _require_control(control_token)
+        result = _client().scroll_mouse(0, delta_y)
+        audit("mouse_scrolled", {"delta_y": delta_y}, settings.audit_log)
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_list_iso_images() -> dict[str, Any]:
+    """List ISO images already stored on this PiKVM and the virtual-media drive state. This is read-only; use before mounting an ISO."""
+    try:
+        settings = _settings_or_error()
+        result = _client().media_status()
+        storage = result.get("storage", {}) if isinstance(result, dict) else {}
+        images = storage.get("images", {}) if isinstance(storage, dict) else {}
+        if not isinstance(images, dict):
+            images = {}
+        iso_images = {name: details for name, details in images.items() if isinstance(name, str) and name.lower().endswith(".iso")}
+        audit("iso_images_listed", {"count": len(iso_images)}, settings.audit_log)
+        return {
+            "ok": True,
+            "images": iso_images,
+            "drive": result.get("drive", {}) if isinstance(result, dict) else {},
+        }
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_mount_iso(image: str, control_token: str, confirmation: str) -> dict[str, Any]:
+    """Mount an ISO already listed by pikvm_list_iso_images as a read-only virtual CD-ROM. Requires exact confirmation CONFIRM MOUNT <image>."""
+    try:
+        if not image or not image.lower().endswith(".iso"):
+            raise ValueError("Only a previously listed .iso image can be mounted.")
+        expected = f"CONFIRM MOUNT {image}"
+        if confirmation != expected:
+            raise PermissionError(f"Confirmation must be exactly: {expected}")
+        settings = _require_control(control_token)
+        media = _client().media_status()
+        storage = media.get("storage", {}) if isinstance(media, dict) else {}
+        images = storage.get("images", {}) if isinstance(storage, dict) else {}
+        if not isinstance(images, dict) or image not in images:
+            raise ValueError("The ISO is not currently available on this PiKVM. List ISO images again before mounting.")
+        result = _client().mount_media(image)
+        audit("iso_mounted", {"image": image}, settings.audit_log)
+        return {"ok": True, "result": result, "image": image}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_eject_media(control_token: str, confirmation: str) -> dict[str, Any]:
+    """Disconnect the currently mounted PiKVM virtual CD/DVD or USB image from the target PC. Requires confirmation CONFIRM EJECT MEDIA."""
+    try:
+        if confirmation != "CONFIRM EJECT MEDIA":
+            raise PermissionError("Confirmation must be exactly: CONFIRM EJECT MEDIA")
+        settings = _require_control(control_token)
+        result = _client().eject_media()
+        audit("media_ejected", {}, settings.audit_log)
         return {"ok": True, "result": result}
     except Exception as exc:
         return _safe_error(exc)

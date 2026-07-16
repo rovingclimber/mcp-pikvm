@@ -67,8 +67,33 @@ class PiKVMClient:
     def send_shortcut(self, keys: list[str]) -> Any:
         return self.request("POST", "/api/hid/events/send_shortcut", params={"keys": ",".join(keys)})
 
+    def press_key(self, key: str) -> Any:
+        """Press and release one named PiKVM HID key without leaving it stuck."""
+        return self.request(
+            "POST",
+            "/api/hid/events/send_key",
+            params={"key": key, "state": "true", "finish": "true"},
+        )
+
+    def set_hid_connected(self, connected: bool) -> Any:
+        return self.request("POST", "/api/hid/set_connected", params={"connected": str(connected).lower()})
+
+    def reset_hid(self) -> Any:
+        return self.request("POST", "/api/hid/reset")
+
+    def set_mouse_mode(self, mode: str) -> Any:
+        output = {"absolute": "usb", "relative": "usb_rel"}[mode]
+        return self.request("POST", "/api/hid/set_params", params={"mouse_output": output})
+
     def move_mouse_absolute(self, to_x: int, to_y: int) -> Any:
         return self.request("POST", "/api/hid/events/send_mouse_move", params={"to_x": to_x, "to_y": to_y})
+
+    def move_mouse_relative(self, delta_x: int, delta_y: int) -> Any:
+        return self.request(
+            "POST",
+            "/api/hid/events/send_mouse_relative",
+            params={"delta_x": delta_x, "delta_y": delta_y},
+        )
 
     def set_mouse_button(self, button: str, state: bool) -> Any:
         return self.request(
@@ -76,3 +101,21 @@ class PiKVMClient:
             "/api/hid/events/send_mouse_button",
             params={"button": button, "state": str(state).lower()},
         )
+
+    def scroll_mouse(self, delta_x: int, delta_y: int) -> Any:
+        return self.request(
+            "POST",
+            "/api/hid/events/send_mouse_wheel",
+            params={"delta_x": delta_x, "delta_y": delta_y},
+        )
+
+    def media_status(self) -> Any:
+        return self.request("GET", "/api/msd")
+
+    def mount_media(self, image: str) -> Any:
+        self.request("POST", "/api/msd/set_connected", params={"connected": "false"})
+        self.request("POST", "/api/msd/set_params", params={"image": image, "cdrom": "true", "rw": "false"})
+        return self.request("POST", "/api/msd/set_connected", params={"connected": "true"})
+
+    def eject_media(self) -> Any:
+        return self.request("POST", "/api/msd/set_connected", params={"connected": "false"})
