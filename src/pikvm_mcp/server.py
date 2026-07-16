@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import hashlib
 import base64
+from ipaddress import ip_address
 import logging
 import os
 import secrets
@@ -64,6 +65,28 @@ class OriginAllowlistMiddleware:
             origin = headers.get("origin")
             if origin and origin not in self.allowed_origins:
                 response = JSONResponse({"error": "origin_not_allowed"}, status_code=403)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+class ClientNetworkMiddleware:
+    """Optionally restrict direct HTTP clients to private CIDR ranges."""
+
+    def __init__(self, app: Any, allowed_networks: list[Any]) -> None:
+        self.app = app
+        self.allowed_networks = allowed_networks
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and self.allowed_networks:
+            client = scope.get("client")
+            host = client[0] if client else None
+            try:
+                allowed = bool(host) and any(ip_address(host) in network for network in self.allowed_networks)
+            except ValueError:
+                allowed = False
+            if not allowed:
+                response = JSONResponse({"error": "client_network_not_allowed"}, status_code=403)
                 await response(scope, receive, send)
                 return
         await self.app(scope, receive, send)
@@ -582,7 +605,10 @@ def main() -> None:
         allowed_origins=settings.allowed_origins,
     )
     app = mcp.streamable_http_app()
-    app = OriginAllowlistMiddleware(BearerTokenMiddleware(app, settings.bearer_token), settings.allowed_origins)
+    app = ClientNetworkMiddleware(
+        OriginAllowlistMiddleware(BearerTokenMiddleware(app, settings.bearer_token), settings.allowed_origins),
+        settings.allowed_client_networks,
+    )
 
     import uvicorn
 

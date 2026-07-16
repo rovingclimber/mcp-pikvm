@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from ipaddress import IPv4Network, IPv6Network, ip_network
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -118,6 +119,7 @@ class HttpSettings:
     bearer_token: str
     allowed_hosts: list[str]
     allowed_origins: list[str]
+    allowed_client_networks: list[IPv4Network | IPv6Network]
 
     @classmethod
     def from_environment(cls) -> "HttpSettings":
@@ -132,7 +134,13 @@ class HttpSettings:
             parsed = urlsplit(origin)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path not in {"", "/"}:
                 raise ConfigurationError("MCP_HTTP_ALLOWED_ORIGINS must contain only absolute HTTP(S) origins.")
-        return cls(bearer_token=token, allowed_hosts=hosts, allowed_origins=origins)
+        networks: list[IPv4Network | IPv6Network] = []
+        for value in _csv("MCP_HTTP_ALLOWED_CLIENT_NETWORKS", ""):
+            try:
+                networks.append(ip_network(value, strict=False))
+            except ValueError as exc:
+                raise ConfigurationError("MCP_HTTP_ALLOWED_CLIENT_NETWORKS must contain CIDR networks such as 192.168.0.0/24.") from exc
+        return cls(bearer_token=token, allowed_hosts=hosts, allowed_origins=origins, allowed_client_networks=networks)
 
 
 def pikvm_is_configured() -> bool:

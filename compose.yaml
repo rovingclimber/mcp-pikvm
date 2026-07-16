@@ -1,8 +1,8 @@
-# Edit the values marked CHANGE ME, then run: docker compose up -d
-# Do not commit your edited copy: it contains PiKVM and MCP credentials.
+# DEFAULT: HTTPS for a trusted local network, with Cloudflare DNS-01.
+# Edit every CHANGE ME value. Do not commit your edited copy: it has credentials.
 services:
   pikvm-mcp:
-    image: rovingclimber/mcp-pikvm:0.6.3
+    image: rovingclimber/mcp-pikvm:0.7.0
     init: true
     restart: unless-stopped
     environment:
@@ -18,15 +18,11 @@ services:
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "8000"
       MCP_STREAMABLE_HTTP_PATH: "/mcp"
-
-      # The basic Compose file is localhost-only. For HTTPS, replace the
-      # first value with your DNS name (for example mcp.example.com). For
-      # trusted-LAN HTTP, change both this list and the published address below.
-      MCP_HTTP_ALLOWED_HOSTS: "localhost:8000,127.0.0.1:8000,[::1]:8000"
+      # CHANGE ME: the exact DNS name below, not a CIDR network.
+      MCP_HTTP_ALLOWED_HOSTS: "mcp.example.com"
       MCP_HTTP_ALLOWED_ORIGINS: ""
 
-    ports:
-      - "127.0.0.1:8000:8000"
+    # No ports here. Only Traefik is reachable from outside Docker.
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
@@ -34,3 +30,46 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    labels:
+      traefik.enable: "true"
+      # CHANGE ME: must match MCP_HTTP_ALLOWED_HOSTS above.
+      traefik.http.routers.pikvm-mcp.rule: "Host(`mcp.example.com`)"
+      traefik.http.routers.pikvm-mcp.entrypoints: websecure
+      traefik.http.routers.pikvm-mcp.tls: "true"
+      traefik.http.routers.pikvm-mcp.tls.certresolver: cloudflare
+      traefik.http.routers.pikvm-mcp.middlewares: pikvm-lan@docker
+      traefik.http.services.pikvm-mcp.loadbalancer.server.port: "8000"
+      # CHANGE ME: CIDR allow-list for devices allowed to reach this MCP.
+      # More examples: "192.168.0.0/24,10.0.0.0/8,fd00::/8"
+      traefik.http.middlewares.pikvm-lan.ipallowlist.sourcerange: "192.168.0.0/24"
+
+  traefik:
+    image: traefik:v3
+    restart: unless-stopped
+    depends_on:
+      - pikvm-mcp
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      # CHANGE ME: certificate-renewal notification address.
+      - --certificatesresolvers.cloudflare.acme.email=you@example.com
+      - --certificatesresolvers.cloudflare.acme.storage=/data/acme.json
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
+    environment:
+      # CHANGE ME: Cloudflare token limited to Zone Read and DNS Edit.
+      CF_DNS_API_TOKEN: "CHANGE-ME"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-data:/data
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  traefik-data:

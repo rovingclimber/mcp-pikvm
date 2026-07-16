@@ -1,0 +1,39 @@
+# FALLBACK: plain HTTP for an explicitly trusted local network only.
+# Edit every CHANGE ME value. Do not commit your edited copy: it has credentials.
+services:
+  pikvm-mcp:
+    image: rovingclimber/mcp-pikvm:0.7.0
+    init: true
+    restart: unless-stopped
+    environment:
+      # --- PiKVM connection (CHANGE ME) ---
+      PIKVM_URL: "https://192.168.1.50"
+      PIKVM_USERNAME: "admin"
+      PIKVM_PASSWORD: "CHANGE-ME"
+      PIKVM_TLS_VERIFY: "true"
+
+      # --- MCP connection (CHANGE ME) ---
+      # Generate with: openssl rand -base64 32
+      MCP_HTTP_BEARER_TOKEN: "CHANGE-ME-USE-A-LONG-RANDOM-TOKEN"
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8000"
+      MCP_STREAMABLE_HTTP_PATH: "/mcp"
+      # CHANGE ME: this is the Docker host's actual LAN IP or hostname;
+      # it is not a CIDR network.
+      MCP_HTTP_ALLOWED_HOSTS: "192.168.1.139:8000"
+      MCP_HTTP_ALLOWED_ORIGINS: ""
+      # CHANGE ME: devices allowed to connect. CIDR examples:
+      # "192.168.0.0/24", "10.0.0.0/8", "fd00::/8"
+      MCP_HTTP_ALLOWED_CLIENT_NETWORKS: "192.168.0.0/24"
+
+    # Deliberately published to the LAN. The CIDR setting above is a second
+    # server-side check; use a firewall too if the host has other networks.
+    ports:
+      - "8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
