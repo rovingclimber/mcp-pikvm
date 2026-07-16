@@ -31,7 +31,7 @@ cd mcp-pikvm
 docker compose up -d
 ```
 
-Connect a native local client to `http://127.0.0.1:8000/mcp`. Read the bearer token from `secrets/mcp_http_bearer_token.txt`; keep that file private.
+If Codex runs on the same Docker host, connect to `http://127.0.0.1:8000/mcp`. If Codex runs on another machine, choose either Caddy HTTPS or the explicit trusted-LAN option in the setup script; it prints the correct endpoint. Read the bearer token from `secrets/mcp_http_bearer_token.txt`; keep that file private.
 
 The base [`compose.yaml`](compose.yaml) is a complete local-only example. To configure manually, copy the `.example` files in [`secrets/`](secrets/), remove the suffix, populate them, and keep the resulting files private. They are ignored by Git and mounted as Docker secrets rather than baked into the image.
 
@@ -56,11 +56,11 @@ Keep the bearer token out of command lines and committed configuration:
 
 ```sh
 export PIKVM_MCP_BEARER_TOKEN="$(cat secrets/mcp_http_bearer_token.txt)"
-codex mcp add pikvm-local --url http://127.0.0.1:8000/mcp \
+codex mcp add pikvm-local --url https://mcp.example.net/mcp \
   --bearer-token-env-var PIKVM_MCP_BEARER_TOKEN
 ```
 
-For HTTPS, substitute `https://your-public-name/mcp`. Reload or start a new Codex task after changing MCP configuration.
+Replace the example URL with the endpoint printed by setup. `127.0.0.1` only works when Codex and Docker run on the same host. For a Windows Codex client connecting to an LXC, use the Caddy HTTPS URL (recommended) or the explicitly enabled trusted-LAN HTTP URL. Reload or start a new Codex task after changing MCP configuration.
 
 ## Optional stdio mode
 

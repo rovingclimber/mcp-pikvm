@@ -16,7 +16,7 @@ services:
     # Localhost-only by default. Put a TLS reverse proxy in front before making
     # the service available to another machine or network.
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${MCP_BIND_ADDRESS:-127.0.0.1}:8000:8000"
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m

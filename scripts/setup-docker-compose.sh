@@ -101,20 +101,40 @@ case "$enable_screen" in
 esac
 
 printf 'Use Caddy automatic HTTPS for a public DNS name? [y/N]: ' >&2
-read -r use_https
+read -r use_https || use_https=''
 case "$use_https" in
     y|Y|yes|YES)
         prompt 'Public DNS name (for example mcp.example.com)' ''
         public_host="$answer"
         safe_host "$public_host" || fail "Enter a plain public DNS name, without a scheme, port, or path."
         allowed_hosts="$public_host"
+        bind_address='127.0.0.1'
         launch_command='docker compose -f compose.yaml -f compose.https.yaml up -d'
         public_host_line="MCP_PUBLIC_HOST=$public_host"
+        endpoint="https://$public_host/mcp"
         ;;
     *)
-        allowed_hosts='localhost:8000,127.0.0.1:8000,[::1]:8000'
-        launch_command='docker compose up -d'
-        public_host_line='# MCP_PUBLIC_HOST is only required with compose.https.yaml'
+        printf 'Allow direct HTTP access only from a trusted LAN? [y/N]: ' >&2
+        read -r use_lan || use_lan=''
+        case "$use_lan" in
+            y|Y|yes|YES)
+                prompt 'LAN hostname or IPv4 address (without port)' ''
+                lan_host="$answer"
+                safe_host "$lan_host" || fail "Enter a plain LAN hostname or IPv4 address, without a scheme, port, or path."
+                allowed_hosts="$lan_host:8000"
+                bind_address='0.0.0.0'
+                launch_command='docker compose up -d'
+                public_host_line='# MCP_PUBLIC_HOST is only required with compose.https.yaml'
+                endpoint="http://$lan_host:8000/mcp"
+                ;;
+            *)
+                allowed_hosts='localhost:8000,127.0.0.1:8000,[::1]:8000'
+                bind_address='127.0.0.1'
+                launch_command='docker compose up -d'
+                public_host_line='# MCP_PUBLIC_HOST is only required with compose.https.yaml'
+                endpoint='http://127.0.0.1:8000/mcp'
+                ;;
+        esac
         ;;
 esac
 
@@ -143,6 +163,8 @@ printf '%s\n' "$control_secret" > "$target_dir/secrets/pikvm_control_secret.txt"
 printf '%s\n' "$bearer_token" > "$target_dir/secrets/mcp_http_bearer_token.txt"
 chmod 700 "$target_dir/secrets"
 chmod 600 "$target_dir/secrets/pikvm-mcp.env" "$target_dir/secrets"/*.txt
+printf 'MCP_BIND_ADDRESS=%s\n' "$bind_address" > "$target_dir/.env"
+chmod 600 "$target_dir/.env"
 
 echo '' >&2
 echo "Configuration created in: $target_dir" >&2
@@ -150,6 +172,9 @@ echo "The bearer token is in secrets/mcp_http_bearer_token.txt." >&2
 echo "The separate control secret is in secrets/pikvm_control_secret.txt." >&2
 if [ "$use_https" = y ] || [ "$use_https" = Y ] || [ "$use_https" = yes ] || [ "$use_https" = YES ]; then
     echo "Before starting: point $public_host at this server and allow inbound TCP 80 and 443." >&2
+elif [ "$bind_address" = '0.0.0.0' ]; then
+    echo "Direct LAN mode has no TLS. Use it only on a trusted, segmented network." >&2
 fi
+echo "MCP endpoint: $endpoint" >&2
 echo "Start it with:" >&2
 echo "  cd $target_dir && $launch_command" >&2
