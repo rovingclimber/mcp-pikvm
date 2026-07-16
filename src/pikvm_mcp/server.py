@@ -6,7 +6,6 @@ import base64
 import logging
 import os
 import secrets
-import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -19,9 +18,7 @@ from starlette.responses import JSONResponse
 
 from .audit import audit, content_fingerprint
 from .client import PiKVMClient
-from .config import HttpSettings, Settings
-from .admin import create_admin_app
-from .runtime_config import RuntimeConfig
+from .config import HttpSettings, Settings, pikvm_is_configured
 from .security import ConfigurationError
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -89,14 +86,16 @@ def _listener_settings() -> tuple[str, int, str]:
 _http_host, _http_port, _http_path = _listener_settings()
 mcp = FastMCP("PiKVM Local", instructions=(
     "This is a local-only PiKVM bridge. Inspect status before control operations and inspect HID status "
-    "before diagnosing input. Never enable or use control without the operator's explicit instruction. "
+    "before diagnosing input. Never use the view or control token without the operator's explicit instruction. "
     "Use discrete key presses for BIOS navigation; switch to relative mouse mode for BIOS/UEFI only when asked."
 ), host=_http_host, port=_http_port, streamable_http_path=_http_path)
 
-_runtime = RuntimeConfig()
-_control_token: str | None = None
-_control_until = 0.0
-_control_revision = -1
+_configured = pikvm_is_configured()
+_view_token = secrets.token_urlsafe(32)
+_control_token = secrets.token_urlsafe(32)
+if _configured:
+    logging.warning("PiKVM MCP view token (sensitive; replaced on restart): %s", _view_token)
+    logging.warning("PiKVM MCP control token (sensitive; replaced on restart): %s", _control_token)
 
 
 @dataclass(frozen=True)
@@ -123,7 +122,9 @@ _ALLOWED_KEY_NAMES = {
 
 
 def _settings_or_error() -> Settings:
-    return _runtime.get()
+    if not _configured:
+        raise ConfigurationError("PiKVM is not configured. Set PIKVM_URL, PIKVM_USERNAME, and PIKVM_PASSWORD in .env, then restart the container.")
+    return Settings.from_environment()
 
 
 def _client() -> PiKVMClient:
@@ -139,13 +140,23 @@ def _safe_error(exc: Exception) -> dict[str, Any]:
 
 def _require_control(token: str) -> Settings:
     settings = _settings_or_error()
-    if not _control_token or time.monotonic() >= _control_until:
-        raise PermissionError("Control is not armed or the control lease has expired.")
-    if _control_revision != _runtime.revision():
-        raise PermissionError("Control was revoked because PiKVM configuration changed.")
     if not hmac.compare_digest(token, _control_token):
-        raise PermissionError("Invalid control token.")
+        raise PermissionError("Invalid control token. Use the token printed when this container most recently started.")
     return settings
+
+
+def _require_view(token: str) -> Settings:
+    settings = _settings_or_error()
+    if not hmac.compare_digest(token, _view_token):
+        raise PermissionError("Invalid view token. Use the token printed when this container most recently started.")
+    return settings
+
+
+def _tool() -> Any:
+    """Do not advertise PiKVM operations until the container is configured."""
+    def register(function: Any) -> Any:
+        return mcp.tool()(function) if _configured else function
+    return register
 
 
 def _normalised_to_hid(value: float) -> int:
@@ -168,6 +179,30 @@ def _image_error(exc: Exception) -> CallToolResult:
 
 
 @mcp.tool()
+def pikvm_info() -> dict[str, Any]:
+    """Explain this PiKVM MCP server and whether the Docker container is ready to use."""
+    if not _configured:
+        return {
+            "ok": False,
+            "configured": False,
+            "message": (
+                "This PiKVM MCP container is not configured. Set PIKVM_URL, PIKVM_USERNAME, "
+                "and PIKVM_PASSWORD in its .env file, then run docker compose up -d. "
+                "After restart, reconnect this MCP client to see the PiKVM tools."
+            ),
+        }
+    return {
+        "ok": True,
+        "configured": True,
+        "message": (
+            "Bearer access permits status only. Supply the fresh view token from the container startup "
+            "logs for screenshots, or the fresh control token for keyboard, mouse, media, and power actions. "
+            "Both tokens are replaced whenever the container restarts."
+        ),
+    }
+
+
+@_tool()
 def pikvm_status() -> dict[str, Any]:
     """Read PiKVM system, ATX, HID, and virtual-media status. Does not control the target PC."""
     try:
@@ -179,20 +214,12 @@ def pikvm_status() -> dict[str, Any]:
         return _safe_error(exc)
 
 
-@mcp.tool()
-def pikvm_configuration_status() -> dict[str, Any]:
-    """Read whether the PiKVM connection is configured. Safe when no PiKVM credentials have been supplied; never returns credentials."""
-    return {"ok": True, "result": _runtime.status()}
-
-
-@mcp.tool()
-def pikvm_screenshot() -> CallToolResult:
-    """Capture and return the current PiKVM screen as a JPEG image. Requires screen capture to be explicitly enabled in server configuration."""
+@_tool()
+def pikvm_screenshot(view_token: str) -> CallToolResult:
+    """Capture and return the current PiKVM screen as a JPEG image. Requires the fresh view token printed in container startup logs."""
     global _latest_snapshot
     try:
-        settings = _settings_or_error()
-        if not settings.screen_capture_enabled:
-            raise PermissionError("Screen capture is disabled. Set PIKVM_MCP_SCREEN_CAPTURE_ENABLED=1 to allow it.")
+        settings = _require_view(view_token)
         image = _client().snapshot()
         identifier = hashlib.sha256(image).hexdigest()[:20]
         _latest_snapshot = Snapshot(identifier=identifier, captured_at=time.monotonic())
@@ -211,48 +238,7 @@ def pikvm_screenshot() -> CallToolResult:
         return _image_error(exc)
 
 
-@mcp.tool()
-def pikvm_enable_control(operator_secret: str) -> dict[str, Any]:
-    """Arm time-limited control after an operator supplies the out-of-band control secret."""
-    global _control_token, _control_until, _control_revision
-    try:
-        settings = _settings_or_error()
-        if not settings.control_secret:
-            raise PermissionError("Control is disabled: PIKVM_MCP_CONTROL_SECRET is not configured.")
-        if not hmac.compare_digest(operator_secret, settings.control_secret):
-            raise PermissionError("Control secret was rejected.")
-        _control_token = secrets.token_urlsafe(32)
-        _control_until = time.monotonic() + settings.control_ttl_seconds
-        _control_revision = _runtime.revision()
-        audit("control_armed", {"ttl_seconds": settings.control_ttl_seconds}, settings.audit_log)
-        return {"ok": True, "control_token": _control_token, "expires_in_seconds": settings.control_ttl_seconds}
-    except Exception as exc:
-        return _safe_error(exc)
-
-
-@mcp.tool()
-def pikvm_renew_control(operator_secret: str) -> dict[str, Any]:
-    """Renew an expiring control lease with the separate operator secret. Returns a new short-lived control token for lengthy, explicitly approved work."""
-    return pikvm_enable_control(operator_secret)
-
-
-@mcp.tool()
-def pikvm_disable_control() -> dict[str, Any]:
-    """Immediately revoke the active control lease. Safe to call at any time."""
-    global _control_token, _control_until, _control_revision
-    _control_token = None
-    _control_until = 0.0
-    _control_revision = -1
-    try:
-        settings = _settings_or_error()
-        audit("control_revoked", {}, settings.audit_log)
-    except Exception:
-        # Revocation is still successful if PiKVM configuration was never completed.
-        pass
-    return {"ok": True, "message": "Control lease revoked."}
-
-
-@mcp.tool()
+@_tool()
 def pikvm_atx_power(action: str, control_token: str, confirmation: str) -> dict[str, Any]:
     """Change PC power state. action: on, off, off_hard, reset_hard. Confirmation must exactly name the action."""
     try:
@@ -268,7 +254,7 @@ def pikvm_atx_power(action: str, control_token: str, confirmation: str) -> dict[
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_type_text(text: str, control_token: str, press_enter: bool = False) -> dict[str, Any]:
     """Type a short single-line string using PiKVM's text endpoint. Set press_enter=true only when the operator wants the command submitted."""
     try:
@@ -288,7 +274,7 @@ def pikvm_type_text(text: str, control_token: str, press_enter: bool = False) ->
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_type_lines(lines: list[str], control_token: str, confirmation: str) -> dict[str, Any]:
     """Type and submit a small multi-line script one line at a time. Every line gets Enter. Maximum 32 lines / 4096 characters; requires exact CONFIRM TYPE <count> LINES."""
     try:
@@ -313,7 +299,7 @@ def pikvm_type_lines(lines: list[str], control_token: str, confirmation: str) ->
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_press_key(key: str, control_token: str) -> dict[str, Any]:
     """Press and release one named PiKVM HID key, such as Enter, Escape, ArrowDown, F2, or Delete. Prefer this for BIOS/UEFI navigation."""
     try:
@@ -327,9 +313,9 @@ def pikvm_press_key(key: str, control_token: str) -> dict[str, Any]:
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_send_shortcut(keys: list[str], control_token: str) -> dict[str, Any]:
-    """Send a 1-4 key PiKVM shortcut, such as [ControlLeft, AltLeft, Delete]. Requires an active control lease."""
+    """Send a 1-4 key PiKVM shortcut, such as [ControlLeft, AltLeft, Delete]. Requires the fresh control token."""
     try:
         if not 1 <= len(keys) <= 4 or any(key not in _ALLOWED_KEY_NAMES for key in keys):
             raise ValueError("Use one to four supported PiKVM web key names.")
@@ -341,7 +327,7 @@ def pikvm_send_shortcut(keys: list[str], control_token: str) -> dict[str, Any]:
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_set_hid_connection(connected: bool, control_token: str, confirmation: str) -> dict[str, Any]:
     """Connect or disconnect PiKVM keyboard/mouse USB HID. Use when HID status says offline. Confirmation: CONFIRM HID CONNECT or CONFIRM HID DISCONNECT."""
     try:
@@ -356,7 +342,7 @@ def pikvm_set_hid_connection(connected: bool, control_token: str, confirmation: 
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_reset_hid(control_token: str, confirmation: str) -> dict[str, Any]:
     """Release/reset PiKVM HID devices when a key or mouse button may be stuck. Requires confirmation CONFIRM HID RESET."""
     try:
@@ -370,7 +356,7 @@ def pikvm_reset_hid(control_token: str, confirmation: str) -> dict[str, Any]:
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_set_mouse_mode(mode: str, control_token: str, confirmation: str) -> dict[str, Any]:
     """Switch PiKVM mouse between absolute (desktop) and relative (BIOS/UEFI) mode. Requires confirmation CONFIRM MOUSE MODE <mode>."""
     try:
@@ -387,7 +373,7 @@ def pikvm_set_mouse_mode(mode: str, control_token: str, confirmation: str) -> di
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_move_mouse_relative(delta_x: int, delta_y: int, control_token: str) -> dict[str, Any]:
     """Move the relative mouse by a small offset for BIOS/UEFI. Use after selecting relative mouse mode; each delta must be from -2000 to 2000."""
     try:
@@ -401,7 +387,7 @@ def pikvm_move_mouse_relative(delta_x: int, delta_y: int, control_token: str) ->
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_click_mouse(button: str, control_token: str) -> dict[str, Any]:
     """Click left, middle, or right mouse button at the current cursor position. Useful in relative mouse mode."""
     try:
@@ -417,7 +403,7 @@ def pikvm_click_mouse(button: str, control_token: str) -> dict[str, Any]:
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_double_click_mouse(button: str, control_token: str) -> dict[str, Any]:
     """Double-click left, middle, or right mouse button at its current position. Useful with relative mouse mode."""
     try:
@@ -435,7 +421,7 @@ def pikvm_double_click_mouse(button: str, control_token: str) -> dict[str, Any]:
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_scroll_mouse(delta_y: int, control_token: str) -> dict[str, Any]:
     """Scroll the current view using a signed wheel delta from -100 to 100. Positive/negative direction depends on the target OS."""
     try:
@@ -449,7 +435,7 @@ def pikvm_scroll_mouse(delta_y: int, control_token: str) -> dict[str, Any]:
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_list_iso_images() -> dict[str, Any]:
     """List ISO images already stored on this PiKVM and the virtual-media drive state. This is read-only; use before mounting an ISO."""
     try:
@@ -470,7 +456,7 @@ def pikvm_list_iso_images() -> dict[str, Any]:
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_mount_iso(image: str, control_token: str, confirmation: str) -> dict[str, Any]:
     """Mount an ISO already listed by pikvm_list_iso_images as a read-only virtual CD-ROM. Requires exact confirmation CONFIRM MOUNT <image>."""
     try:
@@ -492,7 +478,7 @@ def pikvm_mount_iso(image: str, control_token: str, confirmation: str) -> dict[s
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_eject_media(control_token: str, confirmation: str) -> dict[str, Any]:
     """Disconnect the currently mounted PiKVM virtual CD/DVD or USB image from the target PC. Requires confirmation CONFIRM EJECT MEDIA."""
     try:
@@ -506,7 +492,7 @@ def pikvm_eject_media(control_token: str, confirmation: str) -> dict[str, Any]:
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_click_screen(
     x: float,
     y: float,
@@ -541,7 +527,7 @@ def pikvm_click_screen(
         return _safe_error(exc)
 
 
-@mcp.tool()
+@_tool()
 def pikvm_double_click_screen(
     x: float,
     y: float,
@@ -599,31 +585,6 @@ def main() -> None:
     app = OriginAllowlistMiddleware(BearerTokenMiddleware(app, settings.bearer_token), settings.allowed_origins)
 
     import uvicorn
-
-    def run_admin_listener(admin_app: Any, host: str, port: int) -> None:
-        """Run a separate ASGI server explicitly; do not reuse the MCP app."""
-        server = uvicorn.Server(uvicorn.Config(admin_app, host=host, port=port, log_level="info"))
-        server.run()
-
-    # The optional admin plane is a second listener in the same container, not
-    # a second image or a Docker-socket-backed management service. Compose only
-    # publishes it to loopback by default. Older deployments without its
-    # dedicated secret continue to run MCP-only.
-    if os.getenv("MCP_ADMIN_TOKEN") or os.getenv("MCP_ADMIN_TOKEN_FILE"):
-        admin_host = os.getenv("MCP_ADMIN_HOST", "0.0.0.0").strip()
-        try:
-            admin_port = int(os.getenv("MCP_ADMIN_PORT", "8080"))
-        except ValueError as exc:
-            raise ConfigurationError("MCP_ADMIN_PORT must be an integer.") from exc
-        if not admin_host or not 1 <= admin_port <= 65535:
-            raise ConfigurationError("MCP_ADMIN_HOST must be set and MCP_ADMIN_PORT must be between 1 and 65535.")
-        thread = threading.Thread(
-            target=run_admin_listener,
-            args=(create_admin_app(_runtime), admin_host, admin_port),
-            daemon=True,
-            name="pikvm-mcp-admin",
-        )
-        thread.start()
 
     uvicorn.run(app, host=_http_host, port=_http_port, log_level="info")
 

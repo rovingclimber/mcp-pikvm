@@ -4,53 +4,15 @@ services:
     init: true
     restart: unless-stopped
     env_file:
-      - ./secrets/pikvm-mcp.env
-    environment:
-      PIKVM_PASSWORD_FILE: /run/secrets/pikvm_password
-      PIKVM_MCP_CONTROL_SECRET_FILE: /run/secrets/pikvm_control_secret
-      MCP_HTTP_BEARER_TOKEN_FILE: /run/secrets/mcp_http_bearer_token
-      MCP_ADMIN_TOKEN_FILE: /run/secrets/mcp_admin_token
-      MCP_CONFIG_ENCRYPTION_KEY_FILE: /run/secrets/mcp_config_encryption_key
-      MCP_ADMIN_HOST: 0.0.0.0
-      MCP_ADMIN_PORT: 8080
-    secrets:
-      - pikvm_password
-      - pikvm_control_secret
-      - mcp_http_bearer_token
-      - mcp_admin_token
-      - mcp_config_encryption_key
-    # Localhost-only by default. Put a TLS reverse proxy in front before making
-    # the service available to another machine or network.
+      - .env
+    # The ordinary setup is a trusted-LAN HTTP endpoint. Set this to your
+    # server's LAN IP (or 0.0.0.0) only when that is intentional.
     ports:
       - "${MCP_BIND_ADDRESS:-127.0.0.1}:8000:8000"
-      - "${MCP_ADMIN_BIND_ADDRESS:-127.0.0.1}:8080:8080"
-    volumes:
-      - pikvm-mcp-runtime:/var/lib/pikvm-mcp
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
     cap_drop:
       - ALL
-    # Required only for the entrypoint to hand Compose-mounted secrets to the
-    # unprivileged service user. su-exec drops to that user before MCP starts.
-    cap_add:
-      - SETUID
-      - SETGID
-      - CHOWN
     security_opt:
       - no-new-privileges:true
-
-secrets:
-  pikvm_password:
-    file: ./secrets/pikvm_password.txt
-  pikvm_control_secret:
-    file: ./secrets/pikvm_control_secret.txt
-  mcp_http_bearer_token:
-    file: ./secrets/mcp_http_bearer_token.txt
-  mcp_admin_token:
-    file: ./secrets/mcp_admin_token.txt
-  mcp_config_encryption_key:
-    file: ./secrets/mcp_config_encryption_key.txt
-
-volumes:
-  pikvm-mcp-runtime:

@@ -1,167 +1,125 @@
 # PiKVM MCP
 
-A safety-first [Model Context Protocol](https://modelcontextprotocol.io/) server for one PiKVM. The Docker image serves Streamable HTTP at `/mcp`, with optional local stdio support.
+Control one PiKVM from an MCP client such as Codex. It is designed for the useful real-world jobs: seeing a remote screen, BIOS navigation, typing carefully, mounting an ISO already on the PiKVM, and power control — without turning the MCP into a general remote shell.
 
-Published images: `rovingclimber/mcp-pikvm`. Use a fixed release tag in production; `latest` tracks the newest tagged release.
+The image is `rovingclimber/mcp-pikvm`. The endpoint is `/mcp`.
 
-## Safety model
+## The simple security model
 
-- HTTP MCP requires a separate bearer token; anonymous network access is not supported.
-- Host and Origin validation protect the endpoint. Native MCP clients normally omit `Origin`; browser origins must be explicitly allowed.
-- The base Compose file publishes only `127.0.0.1:8000`.
-- The PiKVM must be on a private/link-local/loopback network by default; redirects, arbitrary API paths, and public PiKVM addresses are rejected.
-- PiKVM HTTPS and certificate verification are enabled by default.
-- Control requires a separate operator secret, a short-lived control token, and additional confirmations for power and click actions.
-- Audit records exclude passwords, bearer tokens, control secrets, and typed text.
+There are three separate keys. This is the important bit.
 
-## Easy Docker Compose setup
+| Key | Where it lives | What it allows |
+| --- | --- | --- |
+| Bearer token | Your local `.env` | Connect to MCP and read PiKVM status. |
+| View token | Generated when the container starts; shown in Docker logs | Capture a screen image. |
+| Control token | Generated when the container starts; shown in Docker logs | Keyboard, mouse, ISO and power actions. |
 
-Download the setup script, inspect it, then run it. It downloads the Compose files, prompts for the PiKVM password without echoing it, generates independent bearer and control secrets, and stores them in an owner-only `mcp-pikvm/secrets` directory. Do **not** pipe downloaded scripts directly into `sh`.
+The view and control tokens are fresh on every container restart. An old Codex task cannot keep screen or control authority after a restart. Docker logs are sensitive while those tokens are valid.
+
+If `PIKVM_URL`, `PIKVM_USERNAME`, or `PIKVM_PASSWORD` are missing, the MCP server still starts but exposes **only** `pikvm_info`. It explains exactly what needs adding to `.env`. This is deliberate: a half-configured container cannot accidentally expose PiKVM functions.
+
+## The recommended setup: HTTPS with Cloudflare DNS-01
+
+This is the normal setup for a Windows PC running Codex and a Docker host/LXC elsewhere on your network. It gives your private MCP a normal, publicly trusted HTTPS certificate without opening ports merely to obtain the certificate.
+
+Before starting, create a Cloudflare API token scoped only to the DNS zone used by your MCP hostname:
+
+- `Zone / Zone / Read`
+- `Zone / DNS / Edit`
+
+Point a DNS record such as `mcp.example.com` at your Docker host's private address for your own network. The record need not be Internet-routable for DNS-01 validation.
+
+On the Docker host:
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.2.2/scripts/setup-docker-compose.sh
+curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/main/scripts/setup-docker-compose.sh
 less setup-docker-compose.sh
 sh setup-docker-compose.sh
 ```
 
-For a local-only deployment:
-
-```sh
-cd mcp-pikvm
-docker compose up -d
-```
-
-If Codex runs on the same Docker host, connect to `http://127.0.0.1:8000/mcp`. If Codex runs on another machine, choose either Caddy HTTPS or the explicit trusted-LAN option in the setup script; it prints the correct endpoint. Read the bearer token from `secrets/mcp_http_bearer_token.txt`; keep that file private.
-
-The base [`compose.yaml`](compose.yaml) is a complete local-only example. To configure manually, copy the `.example` files in [`secrets/`](secrets/), remove the suffix, populate them, and keep the resulting files private. They are ignored by Git and mounted as Docker secrets rather than baked into the image.
-
-## Local admin UI
-
-The same container includes a small admin UI at `http://127.0.0.1:8080/`. It is a separate, loopback-only listener with its own `MCP_ADMIN_TOKEN`; it is not an MCP tool and does not expose PiKVM passwords to Codex. The setup script creates the token in `secrets/mcp_admin_token.txt`.
-
-Use the UI to validate and apply a PiKVM URL, username, password, screen-capture setting, and operator control secret without restarting the container. Settings are encrypted in the container's persistent Docker volume using a separate Docker secret. The UI never returns stored credentials; if it generates an operator control secret, it displays it once so the operator can store it securely.
-
-If no PiKVM bootstrap configuration exists, MCP still starts. `pikvm_configuration_status` reports `needs_configuration`; PiKVM status, screenshots, and controls explain that the local admin UI must be used first. Do not publish port 8080 directly. For remote administration, use an SSH tunnel or add a deliberately configured HTTPS reverse proxy.
-
-## Optional public HTTPS with Caddy
-
-The setup script can configure the optional [`compose.https.yaml`](compose.https.yaml) overlay. It starts Caddy as a reverse proxy: Caddy is the only service exposed to ports 80 and 443; the PiKVM MCP service remains on its private Docker network and its loopback port.
-
-Choose `y` when the script asks about Caddy HTTPS, give it a public DNS name, point that name's A/AAAA record at the host, and allow inbound TCP 80 and 443. Then start:
+Choose the default **HTTPS with Cloudflare DNS-01** option. The script creates `mcp-pikvm/.env` with mode `600`; it contains your PiKVM password, MCP bearer token, and Cloudflare API token. It is ignored by Git. Then start it using the command printed by the script:
 
 ```sh
 cd mcp-pikvm
 docker compose -f compose.yaml -f compose.https.yaml up -d
 ```
 
-Caddy obtains and renews the certificate and redirects HTTP to HTTPS automatically. Keep `MCP_HTTP_ALLOWED_ORIGINS` empty for native MCP clients; add exact HTTPS origins only if browser clients are intended. [Caddy automatic HTTPS requirements](https://caddyserver.com/docs/automatic-https)
+Traefik is the small companion container that obtains and renews the certificate. The PiKVM MCP container remains separate; it has no Docker socket access. Traefik needs a read-only Docker socket so it can route HTTPS traffic to this one service.
 
-The bearer-token gate is appropriate for a controlled private deployment. For an internet-facing or multi-user service, add an identity-aware proxy or OAuth provider and restrict access at the network layer.
-
-## Connect Codex
-
-Keep the bearer token out of command lines and committed configuration:
+Get the two temporary operator tokens whenever you need them:
 
 ```sh
-export PIKVM_MCP_BEARER_TOKEN="$(cat secrets/mcp_http_bearer_token.txt)"
-codex mcp add pikvm-local --url https://mcp.example.net/mcp \
-  --bearer-token-env-var PIKVM_MCP_BEARER_TOKEN
+docker compose logs pikvm-mcp
 ```
 
-Replace the example URL with the endpoint printed by setup. `127.0.0.1` only works when Codex and Docker run on the same host. For a Windows Codex client connecting to an LXC, use the Caddy HTTPS URL (recommended) or the explicitly enabled trusted-LAN HTTP URL. Reload or start a new Codex task after changing MCP configuration.
+Restarting revokes both immediately:
 
-### Windows + Codex Desktop: first connection
-
-This is the usual arrangement when Docker and PiKVM MCP run in an LXC, while Codex Desktop runs on a Windows PC. The MCP entry is added to your local Codex configuration; it is available to new tasks on that PC, rather than being committed to a project repository.
-
-1. On the LXC, run the setup script and start the service. Choose **Caddy HTTPS** if the Windows PC reaches it through a DNS name. The trusted-LAN HTTP option is only for a private management network.
-2. Note the endpoint printed by the setup script. For example: `https://mcp.example.net/mcp` or `http://192.168.1.139:8000/mcp`. Do not use `127.0.0.1` here unless Docker is running on the same Windows PC.
-3. In **PowerShell** on Windows, put the bearer token in your Windows user environment. If you copied the secret file to a safe location on Windows, use that path:
-
-   ```powershell
-   $token = (Get-Content -Raw "$HOME\mcp-pikvm\mcp_http_bearer_token.txt").Trim()
-   [Environment]::SetEnvironmentVariable("PIKVM_MCP_BEARER_TOKEN", $token, "User")
-   Remove-Variable token
-   ```
-
-   Or, if you have SSH key access to the LXC, retrieve it directly without ever pasting it into a command line or chat:
-
-   ```powershell
-   $token = (ssh mcpbuild@192.168.1.139 "cat /home/mcpbuild/pikvm-mcp-lan/secrets/mcp_http_bearer_token.txt").Trim()
-   [Environment]::SetEnvironmentVariable("PIKVM_MCP_BEARER_TOKEN", $token, "User")
-   Remove-Variable token
-   ```
-
-   Replace the hostname and path with your own deployment. The token is stored in your Windows user environment; it is not written into the Codex MCP configuration.
-4. Close Codex Desktop completely and open it again, so it receives the new environment variable. Then run this in PowerShell, replacing the URL only:
-
-   ```powershell
-   codex mcp add pikvm-lan --url "https://mcp.example.net/mcp" --bearer-token-env-var PIKVM_MCP_BEARER_TOKEN
-   codex mcp list
-   ```
-
-   For the LXC trusted-LAN test deployment, the URL would be `http://192.168.1.139:8000/mcp`. The command stores the **environment-variable name**, not its value.
-5. Start a **new Codex task**. Type `/mcp` to check that `pikvm-lan` is connected, then ask it to call `pikvm_status` first and `pikvm_screenshot` if you enabled screen capture.
-
-If you want PiKVM to be available only while working in one trusted repository, add the same entry to that repository's `.codex/config.toml` instead of using `codex mcp add`:
-
-```toml
-[mcp_servers.pikvm-lan]
-url = "https://mcp.example.net/mcp"
-bearer_token_env_var = "PIKVM_MCP_BEARER_TOKEN"
+```sh
+docker compose restart pikvm-mcp
 ```
 
-Codex loads project configuration only after you trust that repository. The bearer token remains in the Windows user environment, not in this file. For most people, the `codex mcp add` command is the simpler choice and makes PiKVM available from every local project.
+## Connect Codex on Windows
 
-To remove the connection later, run `codex mcp remove pikvm-lan`. To remove the stored Windows token, run:
+The Docker host and Codex do **not** normally live on the same machine. Use the HTTPS address, not `127.0.0.1`:
+
+```text
+https://mcp.example.com/mcp
+```
+
+In PowerShell on the Windows PC, create a Windows-user environment variable holding the bearer token. If you can SSH to the Docker host, replace the host and path below with your own deployment:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("PIKVM_MCP_BEARER_TOKEN", $null, "User")
+$token = (ssh user@docker-host "cat /path/to/mcp-pikvm/.env" | Select-String '^MCP_HTTP_BEARER_TOKEN=').ToString().Split('=', 2)[1]
+[Environment]::SetEnvironmentVariable('PIKVM_MCP_BEARER_TOKEN', $token, 'User')
+Remove-Variable token
 ```
 
-### How Codex knows what the server can do
+Then fully close and reopen Codex Desktop, and add the MCP connection:
 
-No separate prompt is required for the basic behaviour. When Codex connects, MCP supplies the server name, its general instructions, and a list of tools with their descriptions and input fields. This server tells Codex to inspect status before control and never arm control without the operator's explicit instruction. Each sensitive tool also describes its required control token and confirmation.
+```powershell
+codex mcp add pikvm-lan --url "https://mcp.example.com/mcp" --bearer-token-env-var PIKVM_MCP_BEARER_TOKEN
+codex mcp list
+```
 
-You can still add a project instruction such as “use PiKVM only when I explicitly ask; always start with `pikvm_status`; never power-cycle the PC without restating the action.” That is useful for your preferred workflow, but it supplements rather than replaces the server's built-in safety checks.
+Start a **new task**. Type `/mcp` to check it is connected. Codex receives the tool names, descriptions, inputs, and the server's safety instructions automatically; no special prompt is needed.
 
-## Optional stdio mode
+For an operator-assisted task, retrieve the temporary view/control tokens from Docker logs and provide the appropriate one only when Codex asks for it. Start with `pikvm_status`, then use a view token for `pikvm_screenshot`. A control token is needed for every operation that changes the target.
 
-For a client that launches the container directly without any listener:
+## Trusted-LAN HTTP instead
+
+The setup script also offers an HTTP option. Choose it only for an intentionally trusted, segmented LAN. It listens on port 8000 and gives an address such as:
+
+```text
+http://192.168.1.139:8000/mcp
+```
+
+For a manual setup, copy [`.env.example`](.env.example) to `.env`, populate it, set `MCP_BIND_ADDRESS` and `MCP_HTTP_ALLOWED_HOSTS` to your intended LAN host, then run:
 
 ```sh
-docker run --rm -i --env-file .env -e MCP_TRANSPORT=stdio rovingclimber/mcp-pikvm:latest
+docker compose up -d
 ```
 
-## Control and screen workflow
+## What the tools do
 
-1. Read `pikvm_status` first.
-2. An operator supplies the separately stored `PIKVM_MCP_CONTROL_SECRET` to `pikvm_enable_control`.
-3. Use the returned, short-lived control token for keyboard, mouse, and power operations.
-4. Power actions require an exact matching confirmation; screen clicks require a fresh screenshot and `CONFIRM CLICK`.
-5. Call `pikvm_disable_control` when finished.
+- `pikvm_info` explains readiness and the token model.
+- `pikvm_status` reads PiKVM, HID, ATX and virtual-media state with bearer access only.
+- `pikvm_screenshot` requires a view token; it returns an image and a short-lived screenshot ID.
+- Keyboard, mouse, ISO mounting/ejection, HID connection and ATX tools require the control token. Power, mouse mode, media changes and screen-coordinate clicks also require clear confirmation text.
 
-Screens are disabled by default. Set `PIKVM_MCP_SCREEN_CAPTURE_ENABLED=1` only when a connected client should receive screen content. `pikvm_screenshot` returns JPEG content directly through MCP; `pikvm_click_screen` translates normalized screenshot coordinates into PiKVM absolute HID coordinates.
+For desktop work use **absolute** mouse mode and a fresh screenshot before a coordinate click. For BIOS/UEFI use **relative** mouse mode, then `pikvm_move_mouse_relative` and `pikvm_click_mouse`. `pikvm_press_key` is more dependable than typed text in firmware screens.
 
-### Input modes and BIOS repair
+The server never provides arbitrary shell execution, PiKVM configuration changes, arbitrary PiKVM API calls, or media uploads/downloads.
 
-- `pikvm_type_text` uses PiKVM's text endpoint. Set `press_enter=true` only when the operator has explicitly asked to submit that text.
-- `pikvm_type_lines` is for a short, explicitly confirmed multi-line script. It submits each supplied line with Enter and never records the text in the audit log.
-- `pikvm_press_key` is the reliable choice for a single BIOS/UEFI key such as `F2`, `Delete`, `Enter`, `Escape`, or an arrow key; it presses and releases the key in one operation.
-- `pikvm_send_shortcut` is for combinations such as `ControlLeft` + `AltLeft` + `Delete`.
-- `pikvm_set_mouse_mode` selects `absolute` for desktop click-on-screenshot work or `relative` for BIOS/UEFI. Then use `pikvm_move_mouse_relative` and `pikvm_click_mouse` in firmware screens.
-- Use `pikvm_double_click_screen` for a desktop icon in absolute mode, or `pikvm_double_click_mouse` at the current pointer position in relative mode. Screenshot-coordinate click tools deliberately reject relative mode rather than sending an unpredictable absolute move.
-- If `pikvm_status` reports keyboard or mouse HID as offline, use the explicitly confirmed `pikvm_set_hid_connection` action. `pikvm_reset_hid` releases any stuck input state.
+## Updating
 
-Control leases are intentionally short. For a longer repair workflow, call `pikvm_renew_control` with the separately stored operator secret before the lease expires; it returns a fresh control token.
+Use a version tag rather than `latest` once you have a working deployment. To update later:
 
-Not every PiKVM model/configuration exposes a relative mouse output. The tools report the PiKVM API error rather than guessing; enable PiKVM's relative/dual mouse support in its own configuration if necessary. See the [PiKVM mouse guide](https://docs.pikvm.org/mouse/).
+```sh
+docker compose pull
+docker compose up -d
+```
 
-### Safe virtual media
-
-`pikvm_list_iso_images` provides a read-only list of ISOs already stored on the PiKVM. `pikvm_mount_iso` only accepts an ISO from that current list, mounts it read-only as a virtual CD-ROM, and requires `CONFIRM MOUNT <image>`. `pikvm_eject_media` requires `CONFIRM EJECT MEDIA`.
-
-This server deliberately does not upload, download, delete, or fetch media from arbitrary URLs. Stage trusted ISOs through the PiKVM web interface or your own managed process, then use the MCP tools to inspect and mount them.
+Read the release notes first. Container restart means new view/control tokens, which is normally what you want.
 
 ## Development
 
@@ -170,4 +128,4 @@ uv sync --group dev
 uv run pytest
 ```
 
-The server uses fixed PiKVM API paths and intentionally omits virtual-media uploads, arbitrary API calls, configuration changes, and shell access. See the [PiKVM API reference](https://docs.pikvm.org/api/) and [mouse documentation](https://docs.pikvm.org/mouse/).
+See the [PiKVM API](https://docs.pikvm.org/api/) and [PiKVM mouse guide](https://docs.pikvm.org/mouse/) for the underlying device behaviour.

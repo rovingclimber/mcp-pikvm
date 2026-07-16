@@ -46,9 +46,6 @@ class Settings:
     username: str
     password: str
     tls_verify: bool | str
-    control_secret: str | None
-    control_ttl_seconds: int
-    screen_capture_enabled: bool
     screenshot_ttl_seconds: int
     audit_log: Path | None
 
@@ -64,9 +61,6 @@ class Settings:
             tls_verify_raw=os.getenv("PIKVM_TLS_VERIFY", "true"),
             allow_insecure_tls=_flag("PIKVM_ALLOW_INSECURE_TLS"),
             ca_bundle=os.getenv("PIKVM_CA_BUNDLE") or None,
-            control_secret=_value("PIKVM_MCP_CONTROL_SECRET") or None,
-            control_ttl_seconds=os.getenv("PIKVM_MCP_CONTROL_TTL_SECONDS", "300"),
-            screen_capture_enabled=_flag("PIKVM_MCP_SCREEN_CAPTURE_ENABLED"),
             screenshot_ttl_seconds=os.getenv("PIKVM_MCP_SCREENSHOT_TTL_SECONDS", "30"),
             audit_log=Path(os.getenv("PIKVM_MCP_AUDIT_LOG", "").strip()) if os.getenv("PIKVM_MCP_AUDIT_LOG", "").strip() else None,
         )
@@ -83,9 +77,6 @@ class Settings:
         tls_verify_raw: str = "true",
         allow_insecure_tls: bool = False,
         ca_bundle: str | None = None,
-        control_secret: str | None = None,
-        control_ttl_seconds: int | str = 300,
-        screen_capture_enabled: bool = False,
         screenshot_ttl_seconds: int | str = 30,
         audit_log: Path | None = None,
     ) -> "Settings":
@@ -105,12 +96,6 @@ class Settings:
             raise ConfigurationError("PIKVM_TLS_VERIFY must be true/false.")
 
         try:
-            ttl = int(control_ttl_seconds)
-        except ValueError as exc:
-            raise ConfigurationError("PIKVM_MCP_CONTROL_TTL_SECONDS must be an integer.") from exc
-        if not 30 <= ttl <= 3600:
-            raise ConfigurationError("PIKVM_MCP_CONTROL_TTL_SECONDS must be between 30 and 3600.")
-        try:
             screenshot_ttl = int(screenshot_ttl_seconds)
         except ValueError as exc:
             raise ConfigurationError("PIKVM_MCP_SCREENSHOT_TTL_SECONDS must be an integer.") from exc
@@ -121,9 +106,6 @@ class Settings:
             username=username.strip(),
             password=password,
             tls_verify=tls_verify,
-            control_secret=control_secret,
-            control_ttl_seconds=ttl,
-            screen_capture_enabled=screen_capture_enabled,
             screenshot_ttl_seconds=screenshot_ttl,
             audit_log=audit_log,
         )
@@ -151,6 +133,11 @@ class HttpSettings:
             if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path not in {"", "/"}:
                 raise ConfigurationError("MCP_HTTP_ALLOWED_ORIGINS must contain only absolute HTTP(S) origins.")
         return cls(bearer_token=token, allowed_hosts=hosts, allowed_origins=origins)
+
+
+def pikvm_is_configured() -> bool:
+    """Whether all three PiKVM connection values were supplied at process start."""
+    return bool(_value("PIKVM_URL") and _value("PIKVM_USERNAME") and _value("PIKVM_PASSWORD"))
 
 
 def _csv(name: str, default: str) -> list[str]:

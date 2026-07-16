@@ -1,12 +1,11 @@
 [project]
 name = "pikvm-local-mcp"
-version = "0.5.1"
+version = "0.6.0"
 description = "A safety-first Streamable HTTP MCP server for PiKVM"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "httpx>=0.27,<1",
-  "cryptography>=42,<50",
   "mcp[cli]>=1.27,<2",
   "uvicorn>=0.30,<1",
 ]

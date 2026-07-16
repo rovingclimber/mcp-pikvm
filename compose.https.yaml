@@ -1,21 +1,40 @@
+# Optional overlay: docker compose -f compose.yaml -f compose.https.yaml up -d
+# Requires MCP_PUBLIC_HOST, ACME_EMAIL, and CF_DNS_API_TOKEN in .env.
 services:
-  caddy:
-    image: caddy:2-alpine
+  pikvm-mcp:
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.pikvm-mcp.rule: "Host(`${MCP_PUBLIC_HOST}`)"
+      traefik.http.routers.pikvm-mcp.entrypoints: websecure
+      traefik.http.routers.pikvm-mcp.tls: "true"
+      traefik.http.routers.pikvm-mcp.tls.certresolver: cloudflare
+      traefik.http.services.pikvm-mcp.loadbalancer.server.port: "8000"
+
+  traefik:
+    image: traefik:v3
     restart: unless-stopped
     depends_on:
       - pikvm-mcp
-    env_file:
-      - ./secrets/pikvm-mcp.env
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.cloudflare.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.cloudflare.acme.storage=/data/acme.json
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-data:/data
     security_opt:
       - no-new-privileges:true
 
 volumes:
-  caddy_data:
-  caddy_config:
+  traefik-data:
