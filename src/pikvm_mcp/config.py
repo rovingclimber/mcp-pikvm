@@ -55,16 +55,48 @@ class Settings:
     @classmethod
     def from_environment(cls) -> "Settings":
         allow_private_hostnames = _flag("PIKVM_ALLOW_PRIVATE_HOSTNAMES")
-        base_url = validate_pikvm_url(
-            _required("PIKVM_URL"),
-            allow_private_hostnames,
-            _flag("PIKVM_ALLOW_INSECURE_HTTP"),
+        return cls.from_values(
+            url=_required("PIKVM_URL"),
+            username=_required("PIKVM_USERNAME"),
+            password=_required("PIKVM_PASSWORD"),
+            allow_private_hostnames=allow_private_hostnames,
+            allow_insecure_http=_flag("PIKVM_ALLOW_INSECURE_HTTP"),
+            tls_verify_raw=os.getenv("PIKVM_TLS_VERIFY", "true"),
+            allow_insecure_tls=_flag("PIKVM_ALLOW_INSECURE_TLS"),
+            ca_bundle=os.getenv("PIKVM_CA_BUNDLE") or None,
+            control_secret=_value("PIKVM_MCP_CONTROL_SECRET") or None,
+            control_ttl_seconds=os.getenv("PIKVM_MCP_CONTROL_TTL_SECONDS", "300"),
+            screen_capture_enabled=_flag("PIKVM_MCP_SCREEN_CAPTURE_ENABLED"),
+            screenshot_ttl_seconds=os.getenv("PIKVM_MCP_SCREENSHOT_TTL_SECONDS", "30"),
+            audit_log=Path(os.getenv("PIKVM_MCP_AUDIT_LOG", "").strip()) if os.getenv("PIKVM_MCP_AUDIT_LOG", "").strip() else None,
         )
-        tls_verify_raw = os.getenv("PIKVM_TLS_VERIFY", "true").strip().lower()
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        url: str,
+        username: str,
+        password: str,
+        allow_private_hostnames: bool,
+        allow_insecure_http: bool = False,
+        tls_verify_raw: str = "true",
+        allow_insecure_tls: bool = False,
+        ca_bundle: str | None = None,
+        control_secret: str | None = None,
+        control_ttl_seconds: int | str = 300,
+        screen_capture_enabled: bool = False,
+        screenshot_ttl_seconds: int | str = 30,
+        audit_log: Path | None = None,
+    ) -> "Settings":
+        base_url = validate_pikvm_url(url, allow_private_hostnames, allow_insecure_http)
+        if not username.strip() or not password:
+            raise ConfigurationError("PiKVM username and password are required.")
+        tls_verify_raw = tls_verify_raw.strip().lower()
         if tls_verify_raw in {"true", "1", "yes"}:
-            tls_verify: bool | str = os.getenv("PIKVM_CA_BUNDLE") or True
+            tls_verify: bool | str = ca_bundle or True
         elif tls_verify_raw in {"false", "0", "no"}:
-            if not _flag("PIKVM_ALLOW_INSECURE_TLS"):
+            if not allow_insecure_tls:
                 raise ConfigurationError(
                     "Disabling TLS verification requires PIKVM_ALLOW_INSECURE_TLS=1 as a second explicit opt-in."
                 )
@@ -73,28 +105,27 @@ class Settings:
             raise ConfigurationError("PIKVM_TLS_VERIFY must be true/false.")
 
         try:
-            ttl = int(os.getenv("PIKVM_MCP_CONTROL_TTL_SECONDS", "300"))
+            ttl = int(control_ttl_seconds)
         except ValueError as exc:
             raise ConfigurationError("PIKVM_MCP_CONTROL_TTL_SECONDS must be an integer.") from exc
         if not 30 <= ttl <= 3600:
             raise ConfigurationError("PIKVM_MCP_CONTROL_TTL_SECONDS must be between 30 and 3600.")
         try:
-            screenshot_ttl = int(os.getenv("PIKVM_MCP_SCREENSHOT_TTL_SECONDS", "30"))
+            screenshot_ttl = int(screenshot_ttl_seconds)
         except ValueError as exc:
             raise ConfigurationError("PIKVM_MCP_SCREENSHOT_TTL_SECONDS must be an integer.") from exc
         if not 5 <= screenshot_ttl <= 300:
             raise ConfigurationError("PIKVM_MCP_SCREENSHOT_TTL_SECONDS must be between 5 and 300.")
-        audit_log_raw = os.getenv("PIKVM_MCP_AUDIT_LOG", "").strip()
         return cls(
             base_url=base_url,
-            username=_required("PIKVM_USERNAME"),
-            password=_required("PIKVM_PASSWORD"),
+            username=username.strip(),
+            password=password,
             tls_verify=tls_verify,
-            control_secret=_value("PIKVM_MCP_CONTROL_SECRET") or None,
+            control_secret=control_secret,
             control_ttl_seconds=ttl,
-            screen_capture_enabled=_flag("PIKVM_MCP_SCREEN_CAPTURE_ENABLED"),
+            screen_capture_enabled=screen_capture_enabled,
             screenshot_ttl_seconds=screenshot_ttl,
-            audit_log=Path(audit_log_raw) if audit_log_raw else None,
+            audit_log=audit_log,
         )
 
 

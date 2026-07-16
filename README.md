@@ -35,6 +35,14 @@ If Codex runs on the same Docker host, connect to `http://127.0.0.1:8000/mcp`. I
 
 The base [`compose.yaml`](compose.yaml) is a complete local-only example. To configure manually, copy the `.example` files in [`secrets/`](secrets/), remove the suffix, populate them, and keep the resulting files private. They are ignored by Git and mounted as Docker secrets rather than baked into the image.
 
+## Local admin UI
+
+The same container includes a small admin UI at `http://127.0.0.1:8080/`. It is a separate, loopback-only listener with its own `MCP_ADMIN_TOKEN`; it is not an MCP tool and does not expose PiKVM passwords to Codex. The setup script creates the token in `secrets/mcp_admin_token.txt`.
+
+Use the UI to validate and apply a PiKVM URL, username, password, screen-capture setting, and operator control secret without restarting the container. Settings are encrypted in the container's persistent Docker volume using a separate Docker secret. The UI never returns stored credentials; if it generates an operator control secret, it displays it once so the operator can store it securely.
+
+If no PiKVM bootstrap configuration exists, MCP still starts. `pikvm_configuration_status` reports `needs_configuration`; PiKVM status, screenshots, and controls explain that the local admin UI must be used first. Do not publish port 8080 directly. For remote administration, use an SSH tunnel or add a deliberately configured HTTPS reverse proxy.
+
 ## Optional public HTTPS with Caddy
 
 The setup script can configure the optional [`compose.https.yaml`](compose.https.yaml) overlay. It starts Caddy as a reverse proxy: Caddy is the only service exposed to ports 80 and 443; the PiKVM MCP service remains on its private Docker network and its loopback port.

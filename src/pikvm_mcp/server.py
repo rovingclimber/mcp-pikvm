@@ -6,6 +6,7 @@ import base64
 import logging
 import os
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,8 @@ from starlette.responses import JSONResponse
 from .audit import audit, content_fingerprint
 from .client import PiKVMClient
 from .config import HttpSettings, Settings
+from .admin import create_admin_app
+from .runtime_config import RuntimeConfig
 from .security import ConfigurationError
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -90,9 +93,10 @@ mcp = FastMCP("PiKVM Local", instructions=(
     "Use discrete key presses for BIOS navigation; switch to relative mouse mode for BIOS/UEFI only when asked."
 ), host=_http_host, port=_http_port, streamable_http_path=_http_path)
 
-_settings: Settings | None = None
+_runtime = RuntimeConfig()
 _control_token: str | None = None
 _control_until = 0.0
+_control_revision = -1
 
 
 @dataclass(frozen=True)
@@ -119,10 +123,7 @@ _ALLOWED_KEY_NAMES = {
 
 
 def _settings_or_error() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = Settings.from_environment()
-    return _settings
+    return _runtime.get()
 
 
 def _client() -> PiKVMClient:
@@ -140,6 +141,8 @@ def _require_control(token: str) -> Settings:
     settings = _settings_or_error()
     if not _control_token or time.monotonic() >= _control_until:
         raise PermissionError("Control is not armed or the control lease has expired.")
+    if _control_revision != _runtime.revision():
+        raise PermissionError("Control was revoked because PiKVM configuration changed.")
     if not hmac.compare_digest(token, _control_token):
         raise PermissionError("Invalid control token.")
     return settings
@@ -177,6 +180,12 @@ def pikvm_status() -> dict[str, Any]:
 
 
 @mcp.tool()
+def pikvm_configuration_status() -> dict[str, Any]:
+    """Read whether the PiKVM connection is configured. Safe when no PiKVM credentials have been supplied; never returns credentials."""
+    return {"ok": True, "result": _runtime.status()}
+
+
+@mcp.tool()
 def pikvm_screenshot() -> CallToolResult:
     """Capture and return the current PiKVM screen as a JPEG image. Requires screen capture to be explicitly enabled in server configuration."""
     global _latest_snapshot
@@ -205,7 +214,7 @@ def pikvm_screenshot() -> CallToolResult:
 @mcp.tool()
 def pikvm_enable_control(operator_secret: str) -> dict[str, Any]:
     """Arm time-limited control after an operator supplies the out-of-band control secret."""
-    global _control_token, _control_until
+    global _control_token, _control_until, _control_revision
     try:
         settings = _settings_or_error()
         if not settings.control_secret:
@@ -214,6 +223,7 @@ def pikvm_enable_control(operator_secret: str) -> dict[str, Any]:
             raise PermissionError("Control secret was rejected.")
         _control_token = secrets.token_urlsafe(32)
         _control_until = time.monotonic() + settings.control_ttl_seconds
+        _control_revision = _runtime.revision()
         audit("control_armed", {"ttl_seconds": settings.control_ttl_seconds}, settings.audit_log)
         return {"ok": True, "control_token": _control_token, "expires_in_seconds": settings.control_ttl_seconds}
     except Exception as exc:
@@ -229,9 +239,10 @@ def pikvm_renew_control(operator_secret: str) -> dict[str, Any]:
 @mcp.tool()
 def pikvm_disable_control() -> dict[str, Any]:
     """Immediately revoke the active control lease. Safe to call at any time."""
-    global _control_token, _control_until
+    global _control_token, _control_until, _control_revision
     _control_token = None
     _control_until = 0.0
+    _control_revision = -1
     try:
         settings = _settings_or_error()
         audit("control_revoked", {}, settings.audit_log)
@@ -588,6 +599,26 @@ def main() -> None:
     app = OriginAllowlistMiddleware(BearerTokenMiddleware(app, settings.bearer_token), settings.allowed_origins)
 
     import uvicorn
+
+    # The optional admin plane is a second listener in the same container, not
+    # a second image or a Docker-socket-backed management service. Compose only
+    # publishes it to loopback by default. Older deployments without its
+    # dedicated secret continue to run MCP-only.
+    if os.getenv("MCP_ADMIN_TOKEN") or os.getenv("MCP_ADMIN_TOKEN_FILE"):
+        admin_host = os.getenv("MCP_ADMIN_HOST", "0.0.0.0").strip()
+        try:
+            admin_port = int(os.getenv("MCP_ADMIN_PORT", "8080"))
+        except ValueError as exc:
+            raise ConfigurationError("MCP_ADMIN_PORT must be an integer.") from exc
+        if not admin_host or not 1 <= admin_port <= 65535:
+            raise ConfigurationError("MCP_ADMIN_HOST must be set and MCP_ADMIN_PORT must be between 1 and 65535.")
+        thread = threading.Thread(
+            target=uvicorn.run,
+            kwargs={"app": create_admin_app(_runtime), "host": admin_host, "port": admin_port, "log_level": "info"},
+            daemon=True,
+            name="pikvm-mcp-admin",
+        )
+        thread.start()
 
     uvicorn.run(app, host=_http_host, port=_http_port, log_level="info")
 

@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir .
 COPY scripts/container-entrypoint.sh /usr/local/bin/container-entrypoint
 RUN chmod 0755 /usr/local/bin/container-entrypoint
 
-EXPOSE 8000
+EXPOSE 8000 8080
 
 # Streamable HTTP is the shareable-container default. Set MCP_TRANSPORT=stdio
 # only when the container is launched by a local stdio MCP client.

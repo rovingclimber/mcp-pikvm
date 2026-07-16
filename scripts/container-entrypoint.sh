@@ -18,5 +18,11 @@ copy_secret() {
 copy_secret PIKVM_PASSWORD
 copy_secret PIKVM_MCP_CONTROL_SECRET
 copy_secret MCP_HTTP_BEARER_TOKEN
+copy_secret MCP_ADMIN_TOKEN
+copy_secret MCP_CONFIG_ENCRYPTION_KEY
+
+mkdir -p /var/lib/pikvm-mcp
+chown pikvm:pikvm /var/lib/pikvm-mcp
+chmod 0700 /var/lib/pikvm-mcp
 
 exec su-exec pikvm:pikvm pikvm-local-mcp "$@"

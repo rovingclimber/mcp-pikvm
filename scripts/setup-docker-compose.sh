@@ -83,21 +83,35 @@ fetch deploy/Caddyfile "$target_dir/deploy/Caddyfile"
 echo "PiKVM MCP deployment setup" >&2
 echo "Secrets will be saved under $target_dir/secrets with owner-only permissions." >&2
 
-prompt 'PiKVM URL' 'https://192.168.1.50'
-pikvm_url="$answer"
-safe_line "$pikvm_url" || fail "PiKVM URL contains unsupported characters."
-prompt 'PiKVM username' 'admin'
-username="$answer"
-safe_line "$username" || fail "PiKVM username contains unsupported characters."
-prompt_secret 'PiKVM password'
-password="$answer"
-[ -n "$password" ] || fail "A PiKVM password is required."
-
-printf 'Enable screen capture for this MCP server? [y/N]: ' >&2
-read -r enable_screen
-case "$enable_screen" in
-    y|Y|yes|YES) screen_capture=1 ;;
-    *) screen_capture=0 ;;
+printf 'Configure a PiKVM connection now? [Y/n]: ' >&2
+read -r configure_now || configure_now=''
+case "$configure_now" in
+    n|N|no|NO)
+        pikvm_config_lines=''
+        password=''
+        screen_capture=0
+        ;;
+    *)
+        prompt 'PiKVM URL' 'https://192.168.1.50'
+        pikvm_url="$answer"
+        safe_line "$pikvm_url" || fail "PiKVM URL contains unsupported characters."
+        prompt 'PiKVM username' 'admin'
+        username="$answer"
+        safe_line "$username" || fail "PiKVM username contains unsupported characters."
+        prompt_secret 'PiKVM password'
+        password="$answer"
+        [ -n "$password" ] || fail "A PiKVM password is required."
+        printf 'Enable screen capture for this MCP server? [y/N]: ' >&2
+        read -r enable_screen
+        case "$enable_screen" in y|Y|yes|YES) screen_capture=1 ;; *) screen_capture=0 ;; esac
+        pikvm_config_lines="PIKVM_URL=$pikvm_url
+PIKVM_ALLOW_PRIVATE_HOSTNAMES=1
+PIKVM_USERNAME=$username
+PIKVM_TLS_VERIFY=true
+PIKVM_MCP_CONTROL_TTL_SECONDS=300
+PIKVM_MCP_SCREEN_CAPTURE_ENABLED=$screen_capture
+PIKVM_MCP_SCREENSHOT_TTL_SECONDS=30"
+        ;;
 esac
 
 printf 'Use Caddy automatic HTTPS for a public DNS name? [y/N]: ' >&2
@@ -140,6 +154,8 @@ esac
 
 control_secret="$(random_secret)"
 bearer_token="$(random_secret)"
+admin_token="$(random_secret)"
+config_encryption_key="$(random_secret | tr '/+' '_-')"
 
 cat > "$target_dir/secrets/pikvm-mcp.env" <<EOF
 # Created locally by setup-docker-compose.sh. This file has no secret values.
@@ -150,17 +166,17 @@ MCP_STREAMABLE_HTTP_PATH=/mcp
 MCP_HTTP_ALLOWED_HOSTS=$allowed_hosts
 MCP_HTTP_ALLOWED_ORIGINS=
 $public_host_line
-PIKVM_URL=$pikvm_url
-PIKVM_ALLOW_PRIVATE_HOSTNAMES=1
-PIKVM_USERNAME=$username
-PIKVM_TLS_VERIFY=true
-PIKVM_MCP_CONTROL_TTL_SECONDS=300
-PIKVM_MCP_SCREEN_CAPTURE_ENABLED=$screen_capture
-PIKVM_MCP_SCREENSHOT_TTL_SECONDS=30
+$pikvm_config_lines
 EOF
-printf '%s\n' "$password" > "$target_dir/secrets/pikvm_password.txt"
+if [ -n "$password" ]; then
+    printf '%s\n' "$password" > "$target_dir/secrets/pikvm_password.txt"
+else
+    : > "$target_dir/secrets/pikvm_password.txt"
+fi
 printf '%s\n' "$control_secret" > "$target_dir/secrets/pikvm_control_secret.txt"
 printf '%s\n' "$bearer_token" > "$target_dir/secrets/mcp_http_bearer_token.txt"
+printf '%s\n' "$admin_token" > "$target_dir/secrets/mcp_admin_token.txt"
+printf '%s\n' "$config_encryption_key" > "$target_dir/secrets/mcp_config_encryption_key.txt"
 chmod 700 "$target_dir/secrets"
 # Compose implements local file secrets as bind mounts. The owner-only directory
 # protects these host files; read-only files let the capability-restricted
@@ -168,12 +184,15 @@ chmod 700 "$target_dir/secrets"
 chmod 600 "$target_dir/secrets/pikvm-mcp.env"
 chmod 0444 "$target_dir/secrets"/*.txt
 printf 'MCP_BIND_ADDRESS=%s\n' "$bind_address" > "$target_dir/.env"
+printf 'MCP_ADMIN_BIND_ADDRESS=127.0.0.1\n' >> "$target_dir/.env"
 chmod 600 "$target_dir/.env"
 
 echo '' >&2
 echo "Configuration created in: $target_dir" >&2
 echo "The bearer token is in secrets/mcp_http_bearer_token.txt." >&2
 echo "The separate control secret is in secrets/pikvm_control_secret.txt." >&2
+echo "The local admin token is in secrets/mcp_admin_token.txt." >&2
+echo "Admin UI: http://127.0.0.1:8080/ (keep it local or use an SSH tunnel)." >&2
 if [ "$use_https" = y ] || [ "$use_https" = Y ] || [ "$use_https" = yes ] || [ "$use_https" = YES ]; then
     echo "Before starting: point $public_host at this server and allow inbound TCP 80 and 443." >&2
 elif [ "$bind_address" = '0.0.0.0' ]; then
