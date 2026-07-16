@@ -103,6 +103,10 @@ class Snapshot:
 
 _latest_snapshot: Snapshot | None = None
 
+_MAX_TYPED_LINE_LENGTH = 512
+_MAX_TYPED_LINES = 32
+_MAX_TYPED_BATCH_LENGTH = 4096
+
 _ALLOWED_KEY_NAMES = {
     "AltLeft", "AltRight", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "Backspace",
     "CapsLock", "ContextMenu", "ControlLeft", "ControlRight", "Delete", "End", "Enter", "Escape",
@@ -217,6 +221,12 @@ def pikvm_enable_control(operator_secret: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def pikvm_renew_control(operator_secret: str) -> dict[str, Any]:
+    """Renew an expiring control lease with the separate operator secret. Returns a new short-lived control token for lengthy, explicitly approved work."""
+    return pikvm_enable_control(operator_secret)
+
+
+@mcp.tool()
 def pikvm_disable_control() -> dict[str, Any]:
     """Immediately revoke the active control lease. Safe to call at any time."""
     global _control_token, _control_until
@@ -251,8 +261,8 @@ def pikvm_atx_power(action: str, control_token: str, confirmation: str) -> dict[
 def pikvm_type_text(text: str, control_token: str, press_enter: bool = False) -> dict[str, Any]:
     """Type a short single-line string using PiKVM's text endpoint. Set press_enter=true only when the operator wants the command submitted."""
     try:
-        if not text or len(text) > 512 or "\n" in text or "\r" in text:
-            raise ValueError("Text must be a non-empty single line of at most 512 characters.")
+        if not text or len(text) > _MAX_TYPED_LINE_LENGTH or "\n" in text or "\r" in text:
+            raise ValueError(f"Text must be a non-empty single line of at most {_MAX_TYPED_LINE_LENGTH} characters.")
         settings = _require_control(control_token)
         result = _client().type_text(text)
         if press_enter:
@@ -263,6 +273,31 @@ def pikvm_type_text(text: str, control_token: str, press_enter: bool = False) ->
             settings.audit_log,
         )
         return {"ok": True, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_type_lines(lines: list[str], control_token: str, confirmation: str) -> dict[str, Any]:
+    """Type and submit a small multi-line script one line at a time. Every line gets Enter. Maximum 32 lines / 4096 characters; requires exact CONFIRM TYPE <count> LINES."""
+    try:
+        if not 1 <= len(lines) <= _MAX_TYPED_LINES:
+            raise ValueError(f"Provide between 1 and {_MAX_TYPED_LINES} lines.")
+        if any(not line or "\n" in line or "\r" in line or len(line) > _MAX_TYPED_LINE_LENGTH for line in lines):
+            raise ValueError(f"Each line must be non-empty, single-line, and at most {_MAX_TYPED_LINE_LENGTH} characters.")
+        total_length = sum(len(line) for line in lines)
+        if total_length > _MAX_TYPED_BATCH_LENGTH:
+            raise ValueError(f"The combined line length must be at most {_MAX_TYPED_BATCH_LENGTH} characters.")
+        expected = f"CONFIRM TYPE {len(lines)} LINES"
+        if confirmation != expected:
+            raise PermissionError(f"Confirmation must be exactly: {expected}")
+        settings = _require_control(control_token)
+        client = _client()
+        for line in lines:
+            client.type_text(line)
+            client.press_key("Enter")
+        audit("text_lines_typed", {"count": len(lines), "length": total_length}, settings.audit_log)
+        return {"ok": True, "lines_submitted": len(lines)}
     except Exception as exc:
         return _safe_error(exc)
 
@@ -372,6 +407,24 @@ def pikvm_click_mouse(button: str, control_token: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def pikvm_double_click_mouse(button: str, control_token: str) -> dict[str, Any]:
+    """Double-click left, middle, or right mouse button at its current position. Useful with relative mouse mode."""
+    try:
+        if button not in {"left", "middle", "right"}:
+            raise ValueError("Mouse button must be left, middle, or right.")
+        settings = _require_control(control_token)
+        client = _client()
+        for _ in range(2):
+            client.set_mouse_button(button, True)
+            client.set_mouse_button(button, False)
+            time.sleep(0.1)
+        audit("mouse_double_clicked", {"button": button}, settings.audit_log)
+        return {"ok": True}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
 def pikvm_scroll_mouse(delta_y: int, control_token: str) -> dict[str, Any]:
     """Scroll the current view using a signed wheel delta from -100 to 100. Positive/negative direction depends on the target OS."""
     try:
@@ -456,15 +509,56 @@ def pikvm_click_screen(
             raise PermissionError("Confirmation must be exactly: CONFIRM CLICK")
         settings = _require_control(control_token)
         _require_fresh_snapshot(screenshot_id, settings)
+        client = _client()
+        hid = client.request("GET", "/api/hid")
+        mouse = hid.get("mouse", {}) if isinstance(hid, dict) else {}
+        if isinstance(mouse, dict) and mouse.get("absolute") is False:
+            raise PermissionError("Screenshot-coordinate clicks require absolute mouse mode. Switch to absolute or use relative mouse movement and click tools.")
         hid_x = _normalised_to_hid(x)
         hid_y = _normalised_to_hid(y)
-        client = _client()
         client.move_mouse_absolute(hid_x, hid_y)
         time.sleep(0.075)
         client.set_mouse_button("left", True)
         client.set_mouse_button("left", False)
         audit(
             "screen_clicked",
+            {"snapshot_id": screenshot_id, "x": round(x, 4), "y": round(y, 4)},
+            settings.audit_log,
+        )
+        return {"ok": True, "result": {"hid_x": hid_x, "hid_y": hid_y}}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@mcp.tool()
+def pikvm_double_click_screen(
+    x: float,
+    y: float,
+    screenshot_id: str,
+    control_token: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    """Double-click a fresh screenshot at normalized coordinates in absolute mouse mode. Requires CONFIRM DOUBLE CLICK and a fresh screenshot."""
+    try:
+        if confirmation != "CONFIRM DOUBLE CLICK":
+            raise PermissionError("Confirmation must be exactly: CONFIRM DOUBLE CLICK")
+        settings = _require_control(control_token)
+        _require_fresh_snapshot(screenshot_id, settings)
+        client = _client()
+        hid = client.request("GET", "/api/hid")
+        mouse = hid.get("mouse", {}) if isinstance(hid, dict) else {}
+        if isinstance(mouse, dict) and mouse.get("absolute") is False:
+            raise PermissionError("Screenshot-coordinate clicks require absolute mouse mode. Switch to absolute or use relative mouse movement and click tools.")
+        hid_x = _normalised_to_hid(x)
+        hid_y = _normalised_to_hid(y)
+        client.move_mouse_absolute(hid_x, hid_y)
+        time.sleep(0.075)
+        for _ in range(2):
+            client.set_mouse_button("left", True)
+            client.set_mouse_button("left", False)
+            time.sleep(0.1)
+        audit(
+            "screen_double_clicked",
             {"snapshot_id": screenshot_id, "x": round(x, 4), "y": round(y, 4)},
             settings.audit_log,
         )

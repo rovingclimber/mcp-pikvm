@@ -138,10 +138,14 @@ Screens are disabled by default. Set `PIKVM_MCP_SCREEN_CAPTURE_ENABLED=1` only w
 ### Input modes and BIOS repair
 
 - `pikvm_type_text` uses PiKVM's text endpoint. Set `press_enter=true` only when the operator has explicitly asked to submit that text.
+- `pikvm_type_lines` is for a short, explicitly confirmed multi-line script. It submits each supplied line with Enter and never records the text in the audit log.
 - `pikvm_press_key` is the reliable choice for a single BIOS/UEFI key such as `F2`, `Delete`, `Enter`, `Escape`, or an arrow key; it presses and releases the key in one operation.
 - `pikvm_send_shortcut` is for combinations such as `ControlLeft` + `AltLeft` + `Delete`.
 - `pikvm_set_mouse_mode` selects `absolute` for desktop click-on-screenshot work or `relative` for BIOS/UEFI. Then use `pikvm_move_mouse_relative` and `pikvm_click_mouse` in firmware screens.
+- Use `pikvm_double_click_screen` for a desktop icon in absolute mode, or `pikvm_double_click_mouse` at the current pointer position in relative mode. Screenshot-coordinate click tools deliberately reject relative mode rather than sending an unpredictable absolute move.
 - If `pikvm_status` reports keyboard or mouse HID as offline, use the explicitly confirmed `pikvm_set_hid_connection` action. `pikvm_reset_hid` releases any stuck input state.
+
+Control leases are intentionally short. For a longer repair workflow, call `pikvm_renew_control` with the separately stored operator secret before the lease expires; it returns a fresh control token.
 
 Not every PiKVM model/configuration exposes a relative mouse output. The tools report the PiKVM API error rather than guessing; enable PiKVM's relative/dual mouse support in its own configuration if necessary. See the [PiKVM mouse guide](https://docs.pikvm.org/mouse/).
 
