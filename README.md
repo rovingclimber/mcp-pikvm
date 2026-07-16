@@ -62,6 +62,61 @@ codex mcp add pikvm-local --url https://mcp.example.net/mcp \
 
 Replace the example URL with the endpoint printed by setup. `127.0.0.1` only works when Codex and Docker run on the same host. For a Windows Codex client connecting to an LXC, use the Caddy HTTPS URL (recommended) or the explicitly enabled trusted-LAN HTTP URL. Reload or start a new Codex task after changing MCP configuration.
 
+### Windows + Codex Desktop: first connection
+
+This is the usual arrangement when Docker and PiKVM MCP run in an LXC, while Codex Desktop runs on a Windows PC. The MCP entry is added to your local Codex configuration; it is available to new tasks on that PC, rather than being committed to a project repository.
+
+1. On the LXC, run the setup script and start the service. Choose **Caddy HTTPS** if the Windows PC reaches it through a DNS name. The trusted-LAN HTTP option is only for a private management network.
+2. Note the endpoint printed by the setup script. For example: `https://mcp.example.net/mcp` or `http://192.168.1.139:8000/mcp`. Do not use `127.0.0.1` here unless Docker is running on the same Windows PC.
+3. In **PowerShell** on Windows, put the bearer token in your Windows user environment. If you copied the secret file to a safe location on Windows, use that path:
+
+   ```powershell
+   $token = (Get-Content -Raw "$HOME\mcp-pikvm\mcp_http_bearer_token.txt").Trim()
+   [Environment]::SetEnvironmentVariable("PIKVM_MCP_BEARER_TOKEN", $token, "User")
+   Remove-Variable token
+   ```
+
+   Or, if you have SSH key access to the LXC, retrieve it directly without ever pasting it into a command line or chat:
+
+   ```powershell
+   $token = (ssh mcpbuild@192.168.1.139 "cat /home/mcpbuild/pikvm-mcp-lan/secrets/mcp_http_bearer_token.txt").Trim()
+   [Environment]::SetEnvironmentVariable("PIKVM_MCP_BEARER_TOKEN", $token, "User")
+   Remove-Variable token
+   ```
+
+   Replace the hostname and path with your own deployment. The token is stored in your Windows user environment; it is not written into the Codex MCP configuration.
+4. Close Codex Desktop completely and open it again, so it receives the new environment variable. Then run this in PowerShell, replacing the URL only:
+
+   ```powershell
+   codex mcp add pikvm-lan --url "https://mcp.example.net/mcp" --bearer-token-env-var PIKVM_MCP_BEARER_TOKEN
+   codex mcp list
+   ```
+
+   For the LXC trusted-LAN test deployment, the URL would be `http://192.168.1.139:8000/mcp`. The command stores the **environment-variable name**, not its value.
+5. Start a **new Codex task**. Ask it to call `pikvm_status` first, then `pikvm_screenshot` if you enabled screen capture. It should show the PiKVM tools once the connection succeeds.
+
+If you want PiKVM to be available only while working in one trusted repository, add the same entry to that repository's `.codex/config.toml` instead of using `codex mcp add`:
+
+```toml
+[mcp_servers.pikvm-lan]
+url = "https://mcp.example.net/mcp"
+bearer_token_env_var = "PIKVM_MCP_BEARER_TOKEN"
+```
+
+Codex loads project configuration only after you trust that repository. The bearer token remains in the Windows user environment, not in this file. For most people, the `codex mcp add` command is the simpler choice and makes PiKVM available from every local project.
+
+To remove the connection later, run `codex mcp remove pikvm-lan`. To remove the stored Windows token, run:
+
+```powershell
+[Environment]::SetEnvironmentVariable("PIKVM_MCP_BEARER_TOKEN", $null, "User")
+```
+
+### How Codex knows what the server can do
+
+No separate prompt is required for the basic behaviour. When Codex connects, MCP supplies the server name, its general instructions, and a list of tools with their descriptions and input fields. This server tells Codex to inspect status before control and never arm control without the operator's explicit instruction. Each sensitive tool also describes its required control token and confirmation.
+
+You can still add a project instruction such as “use PiKVM only when I explicitly ask; always start with `pikvm_status`; never power-cycle the PC without restating the action.” That is useful for your preferred workflow, but it supplements rather than replaces the server's built-in safety checks.
+
 ## Optional stdio mode
 
 For a client that launches the container directly without any listener:
