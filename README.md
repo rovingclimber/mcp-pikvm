@@ -121,6 +121,12 @@ docker compose up -d
 
 Read the release notes first. Container restart means new view/control tokens, which is normally what you want.
 
+### Moving from v0.5 or older
+
+v0.6 is intentionally a clean break: it removes the admin page, encrypted runtime configuration, and `secrets/` directory. Do **not** pull the new image into an old Compose directory and expect it to retain those settings.
+
+Instead, make a new deployment directory with the setup script, complete the new `.env`, update the bearer-token environment variable on the Codex computer, then stop the old service before starting the new one. The new container will create fresh view and control tokens on its first start.
+
 ## Development
 
 ```sh
