@@ -162,7 +162,11 @@ printf '%s\n' "$password" > "$target_dir/secrets/pikvm_password.txt"
 printf '%s\n' "$control_secret" > "$target_dir/secrets/pikvm_control_secret.txt"
 printf '%s\n' "$bearer_token" > "$target_dir/secrets/mcp_http_bearer_token.txt"
 chmod 700 "$target_dir/secrets"
-chmod 600 "$target_dir/secrets/pikvm-mcp.env" "$target_dir/secrets"/*.txt
+# Compose implements local file secrets as bind mounts. The owner-only directory
+# protects these host files; read-only files let the capability-restricted
+# container entrypoint copy them into its private tmpfs before dropping user.
+chmod 600 "$target_dir/secrets/pikvm-mcp.env"
+chmod 0444 "$target_dir/secrets"/*.txt
 printf 'MCP_BIND_ADDRESS=%s\n' "$bind_address" > "$target_dir/.env"
 chmod 600 "$target_dir/.env"
 

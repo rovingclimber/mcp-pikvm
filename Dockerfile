@@ -9,17 +9,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MCP_PORT=8000 \
     MCP_STREAMABLE_HTTP_PATH=/mcp
 
-RUN addgroup -S pikvm && adduser -S -D -H -G pikvm pikvm
+RUN apk add --no-cache su-exec \
+    && addgroup -S pikvm \
+    && adduser -S -D -H -G pikvm pikvm
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install --no-cache-dir .
-
-USER pikvm:pikvm
+COPY scripts/container-entrypoint.sh /usr/local/bin/container-entrypoint
+RUN chmod 0755 /usr/local/bin/container-entrypoint
 
 EXPOSE 8000
 
 # Streamable HTTP is the shareable-container default. Set MCP_TRANSPORT=stdio
 # only when the container is launched by a local stdio MCP client.
-ENTRYPOINT ["pikvm-local-mcp"]
+ENTRYPOINT ["/usr/local/bin/container-entrypoint"]

@@ -22,6 +22,11 @@ services:
       - /tmp:rw,noexec,nosuid,size=16m
     cap_drop:
       - ALL
+    # Required only for the entrypoint to hand Compose-mounted secrets to the
+    # unprivileged service user. su-exec drops to that user before MCP starts.
+    cap_add:
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges:true
 

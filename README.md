@@ -19,7 +19,7 @@ Published images: `rovingclimber/mcp-pikvm`. Use a fixed release tag in producti
 Download the setup script, inspect it, then run it. It downloads the Compose files, prompts for the PiKVM password without echoing it, generates independent bearer and control secrets, and stores them in an owner-only `mcp-pikvm/secrets` directory. Do **not** pipe downloaded scripts directly into `sh`.
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.2.0/scripts/setup-docker-compose.sh
+curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.2.2/scripts/setup-docker-compose.sh
 less setup-docker-compose.sh
 sh setup-docker-compose.sh
 ```
