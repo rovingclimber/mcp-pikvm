@@ -31,7 +31,7 @@ On the Docker host:
 
 ```sh
 mkdir mcp-pikvm && cd mcp-pikvm
-curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.7.0/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.8.0/compose.yaml
 ```
 
 Open `compose.yaml` and replace every `CHANGE ME` value. In particular:
@@ -70,7 +70,7 @@ Use this only when every network between your client and the Docker host is trus
 
 ```sh
 mkdir mcp-pikvm && cd mcp-pikvm
-curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.7.0/compose-http.yaml
+curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.8.0/compose-http.yaml
 ```
 
 Edit the marked values, then generate the bearer token:
@@ -172,6 +172,13 @@ The server deliberately does not offer arbitrary shell execution, PiKVM configur
 ## Moving from v0.5 or older
 
 v0.7 removes the admin page, runtime configuration, `secrets/` directory, setup script, and `.env` file. Make a fresh deployment directory using **one** Compose file above, update the Windows bearer-token environment variable, then stop the old service before starting the new one.
+
+## Reusable PiKVM API core
+
+This repository also contains `pikvm_core`: a reusable authenticated PiKVM API
+client with no MCP or LLM dependency. The public MCP uses it, while a future
+trusted local runtime can import it directly. Its full-API transport and
+integration boundary are documented in [PiKVM Core](docs/pikvm-core.md).
 
 ## Development
 

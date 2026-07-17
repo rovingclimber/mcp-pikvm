@@ -1,7 +1,7 @@
 [project]
 name = "pikvm-local-mcp"
-version = "0.7.1"
-description = "A safety-first Streamable HTTP MCP server for PiKVM"
+version = "0.8.0"
+description = "A safety-first PiKVM MCP server with a reusable PiKVM API core"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,7 +21,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pikvm_mcp"]
+packages = ["src/pikvm_mcp", "src/pikvm_core"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
