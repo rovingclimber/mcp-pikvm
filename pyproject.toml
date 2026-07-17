@@ -1,6 +1,6 @@
 [project]
 name = "pikvm-local-mcp"
-version = "0.9.1"
+version = "0.9.2"
 description = "A safety-first PiKVM MCP server with a reusable PiKVM API core"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -148,7 +148,13 @@ class PiKVMClient:
         return self.request("GET", "/api/msd")
 
     def mount_media(self, image: str) -> Any:
-        self.request("POST", "/api/msd/set_connected", params={"connected": "false"})
+        # PiKVM returns MsdDisconnectedError when asked to disconnect an
+        # already-disconnected drive. Query first so mounting works on both
+        # strict and permissive PiKVM API versions.
+        media = self.media_status()
+        drive = media.get("drive", {}) if isinstance(media, dict) else {}
+        if isinstance(drive, dict) and drive.get("connected") is True:
+            self.request("POST", "/api/msd/set_connected", params={"connected": "false"})
         self.request("POST", "/api/msd/set_params", params={"image": image, "cdrom": "true", "rw": "false"})
         return self.request("POST", "/api/msd/set_connected", params={"connected": "true"})
 

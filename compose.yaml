@@ -2,7 +2,7 @@
 # Edit every CHANGE ME value. Do not commit your edited copy: it has credentials.
 services:
   pikvm-mcp:
-    image: rovingclimber/mcp-pikvm:0.9.1
+    image: rovingclimber/mcp-pikvm:0.9.2
     init: true
     restart: unless-stopped
     environment:

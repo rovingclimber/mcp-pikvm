@@ -7,10 +7,13 @@ class RecordingClient(PiKVMClient):
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
         self.contents: list[str | None] = []
+        self.msd_state: dict[str, Any] = {}
 
     def request(self, method: str, path: str, *, params: dict[str, Any] | None = None, content: str | None = None) -> Any:
         self.calls.append((method, path, params))
         self.contents.append(content)
+        if method == "GET" and path == "/api/msd":
+            return self.msd_state
         return {}
 
 
@@ -45,12 +48,26 @@ def test_type_text_uses_default_pikvm_keymap_without_an_empty_parameter():
     assert client.contents == ["echo hello world"]
 
 
-def test_mount_media_disconnects_selects_read_only_cdrom_then_connects():
+def test_mount_media_skips_disconnect_when_drive_is_already_disconnected():
     client = RecordingClient()
 
     client.mount_media("rescue.iso")
 
     assert client.calls == [
+        ("GET", "/api/msd", None),
+        ("POST", "/api/msd/set_params", {"image": "rescue.iso", "cdrom": "true", "rw": "false"}),
+        ("POST", "/api/msd/set_connected", {"connected": "true"}),
+    ]
+
+
+def test_mount_media_disconnects_a_connected_drive_before_selecting_an_iso():
+    client = RecordingClient()
+    client.msd_state = {"drive": {"connected": True}}
+
+    client.mount_media("rescue.iso")
+
+    assert client.calls == [
+        ("GET", "/api/msd", None),
         ("POST", "/api/msd/set_connected", {"connected": "false"}),
         ("POST", "/api/msd/set_params", {"image": "rescue.iso", "cdrom": "true", "rw": "false"}),
         ("POST", "/api/msd/set_connected", {"connected": "true"}),

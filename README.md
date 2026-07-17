@@ -31,7 +31,7 @@ On the Docker host:
 
 ```sh
 mkdir mcp-pikvm && cd mcp-pikvm
-curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.9.1/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.9.2/compose.yaml
 ```
 
 Open `compose.yaml` and replace every `CHANGE ME` value. In particular:
@@ -70,7 +70,7 @@ Use this only when every network between your client and the Docker host is trus
 
 ```sh
 mkdir mcp-pikvm && cd mcp-pikvm
-curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.9.1/compose-http.yaml
+curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.9.2/compose-http.yaml
 ```
 
 Edit the marked values, then generate the bearer token:
