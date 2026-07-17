@@ -9,7 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MCP_PORT=8000 \
     MCP_STREAMABLE_HTTP_PATH=/mcp
 
-RUN addgroup -S pikvm \
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng \
+    && addgroup -S pikvm \
     && adduser -S -D -H -G pikvm pikvm
 
 WORKDIR /app

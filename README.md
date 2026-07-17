@@ -1,6 +1,6 @@
 # PiKVM MCP
 
-Control one PiKVM from an MCP client such as ChatGPT Codex or Google Antigravity. It can view the screen, navigate BIOS, type, mount an ISO already stored on PiKVM, and operate power controls — but it is not a remote shell.
+Control one PiKVM from an MCP client such as ChatGPT Codex or Google Antigravity. It can view and crop the screen, read on-screen text, navigate BIOS, type, mount an ISO already stored on PiKVM, and operate power controls — but it is not a remote shell.
 
 ## Choose one Compose file
 
@@ -31,7 +31,7 @@ On the Docker host:
 
 ```sh
 mkdir mcp-pikvm && cd mcp-pikvm
-curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.8.0/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.9.0/compose.yaml
 ```
 
 Open `compose.yaml` and replace every `CHANGE ME` value. In particular:
@@ -70,7 +70,7 @@ Use this only when every network between your client and the Docker host is trus
 
 ```sh
 mkdir mcp-pikvm && cd mcp-pikvm
-curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.8.0/compose-http.yaml
+curl -fsSLO https://raw.githubusercontent.com/rovingclimber/mcp-pikvm/v0.9.0/compose-http.yaml
 ```
 
 Edit the marked values, then generate the bearer token:
@@ -157,9 +157,9 @@ Use your HTTP endpoint instead only for a trusted LAN. Restart Antigravity after
 ## Operating safely
 
 - `pikvm_status` is bearer-only and read-only.
-- `pikvm_screenshot` requires the current view token.
+- `pikvm_screenshot`, `pikvm_screenshot_region`, and on-demand `pikvm_read_screen_text` require the current view token. OCR is local, runs only when requested, caps its working image at roughly 1.2 megapixels, and never needs a GPU.
 - Keyboard, mouse, ISO mounting/ejection, HID changes and ATX power controls require the current control token. Destructive operations also require clear confirmation text.
-- For desktop work use **absolute** mouse mode and a fresh screenshot before a coordinate click. For BIOS/UEFI use **relative** mouse mode plus `pikvm_move_mouse_relative` and `pikvm_click_mouse`.
+- For desktop work use **absolute** mouse mode and a fresh screenshot before coordinate actions. `pikvm_move_pointer`, `pikvm_click_screen`, `pikvm_double_click_screen`, and `pikvm_drag_screen` use that screenshot ID; dragging requires `CONFIRM DRAG` and always releases the left button if movement fails. For BIOS/UEFI use **relative** mouse mode plus `pikvm_move_mouse_relative` and `pikvm_click_mouse`.
 
 To revoke view/control authority immediately, restart the MCP service:
 

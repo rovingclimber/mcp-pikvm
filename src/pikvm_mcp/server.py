@@ -22,6 +22,7 @@ from .audit import audit, content_fingerprint
 from .client import PiKVMClient
 from .config import HttpSettings, Settings, pikvm_is_configured
 from .security import ConfigurationError
+from .vision import crop_jpeg, read_ocr, validate_region
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -216,6 +217,16 @@ def _image_error(exc: Exception) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=error)], isError=True)
 
 
+def _require_absolute_mouse(client: PiKVMClient) -> None:
+    """Guard screenshot-coordinate actions from a relative-mode PiKVM."""
+    hid = client.request("GET", "/api/hid")
+    mouse = hid.get("mouse", {}) if isinstance(hid, dict) else {}
+    if isinstance(mouse, dict) and mouse.get("absolute") is False:
+        raise PermissionError(
+            "Screenshot-coordinate actions require absolute mouse mode. Switch to absolute or use relative mouse movement and click tools."
+        )
+
+
 @mcp.tool()
 def pikvm_info() -> dict[str, Any]:
     """Explain this PiKVM MCP server and whether the Docker container is ready to use."""
@@ -274,6 +285,56 @@ def pikvm_screenshot(view_token: str) -> CallToolResult:
         ])
     except Exception as exc:
         return _image_error(exc)
+
+
+@_tool()
+def pikvm_screenshot_region(
+    view_token: str,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+) -> CallToolResult:
+    """Capture only a normalized screen region (x/y/width/height from 0 to 1) as a JPEG. Requires the current view token; useful for close inspection without returning the whole display."""
+    try:
+        settings = _require_view(view_token)
+        region = validate_region(x, y, width, height)
+        image = _client().snapshot()
+        cropped, pixels = crop_jpeg(image, region)
+        audit(
+            "screenshot_region_captured",
+            {"x": region.x, "y": region.y, "width": region.width, "height": region.height},
+            settings.audit_log,
+        )
+        return CallToolResult(content=[
+            TextContent(type="text", text=f"Cropped region: {pixels[2] - pixels[0]} x {pixels[3] - pixels[1]} pixels."),
+            ImageContent(type="image", data=base64.b64encode(cropped).decode("ascii"), mimeType="image/jpeg"),
+        ])
+    except Exception as exc:
+        return _image_error(exc)
+
+
+@_tool()
+def pikvm_read_screen_text(
+    view_token: str,
+    x: float = 0.0,
+    y: float = 0.0,
+    width: float = 1.0,
+    height: float = 1.0,
+) -> dict[str, Any]:
+    """Read text from a normalized screen region using on-demand local OCR. Requires the current view token. This is not a continuous observer; it downscales large captures and has a 12-second processing limit."""
+    try:
+        settings = _require_view(view_token)
+        region = validate_region(x, y, width, height)
+        result = read_ocr(_client().snapshot(), region)
+        audit(
+            "screen_ocr_read",
+            {"x": region.x, "y": region.y, "width": region.width, "height": region.height, "words": result["word_count"]},
+            settings.audit_log,
+        )
+        return {"ok": True, "region": region.__dict__, "result": result}
+    except Exception as exc:
+        return _safe_error(exc)
 
 
 @_tool()
@@ -545,10 +606,7 @@ def pikvm_click_screen(
         settings = _require_control(control_token)
         _require_fresh_snapshot(screenshot_id, settings)
         client = _client()
-        hid = client.request("GET", "/api/hid")
-        mouse = hid.get("mouse", {}) if isinstance(hid, dict) else {}
-        if isinstance(mouse, dict) and mouse.get("absolute") is False:
-            raise PermissionError("Screenshot-coordinate clicks require absolute mouse mode. Switch to absolute or use relative mouse movement and click tools.")
+        _require_absolute_mouse(client)
         hid_x = _normalised_to_hid(x)
         hid_y = _normalised_to_hid(y)
         client.move_mouse_absolute(hid_x, hid_y)
@@ -580,10 +638,7 @@ def pikvm_double_click_screen(
         settings = _require_control(control_token)
         _require_fresh_snapshot(screenshot_id, settings)
         client = _client()
-        hid = client.request("GET", "/api/hid")
-        mouse = hid.get("mouse", {}) if isinstance(hid, dict) else {}
-        if isinstance(mouse, dict) and mouse.get("absolute") is False:
-            raise PermissionError("Screenshot-coordinate clicks require absolute mouse mode. Switch to absolute or use relative mouse movement and click tools.")
+        _require_absolute_mouse(client)
         hid_x = _normalised_to_hid(x)
         hid_y = _normalised_to_hid(y)
         client.move_mouse_absolute(hid_x, hid_y)
@@ -598,6 +653,69 @@ def pikvm_double_click_screen(
             settings.audit_log,
         )
         return {"ok": True, "result": {"hid_x": hid_x, "hid_y": hid_y}}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@_tool()
+def pikvm_move_pointer(
+    x: float,
+    y: float,
+    screenshot_id: str,
+    control_token: str,
+) -> dict[str, Any]:
+    """Move the pointer to normalized screenshot coordinates in absolute mouse mode. Requires a fresh screenshot and current control token; it does not click."""
+    try:
+        settings = _require_control(control_token)
+        _require_fresh_snapshot(screenshot_id, settings)
+        client = _client()
+        _require_absolute_mouse(client)
+        hid_x = _normalised_to_hid(x)
+        hid_y = _normalised_to_hid(y)
+        result = client.move_mouse_absolute(hid_x, hid_y)
+        audit("pointer_moved", {"snapshot_id": screenshot_id, "x": round(x, 4), "y": round(y, 4)}, settings.audit_log)
+        return {"ok": True, "result": result, "hid_x": hid_x, "hid_y": hid_y}
+    except Exception as exc:
+        return _safe_error(exc)
+
+
+@_tool()
+def pikvm_drag_screen(
+    start_x: float,
+    start_y: float,
+    end_x: float,
+    end_y: float,
+    screenshot_id: str,
+    control_token: str,
+    confirmation: str,
+) -> dict[str, Any]:
+    """Drag from one normalized screenshot position to another in absolute mouse mode. Requires a fresh screenshot, current control token, and CONFIRM DRAG. Always releases the button if movement fails."""
+    try:
+        if confirmation != "CONFIRM DRAG":
+            raise PermissionError("Confirmation must be exactly: CONFIRM DRAG")
+        settings = _require_control(control_token)
+        _require_fresh_snapshot(screenshot_id, settings)
+        client = _client()
+        _require_absolute_mouse(client)
+        start_hid = (_normalised_to_hid(start_x), _normalised_to_hid(start_y))
+        end_hid = (_normalised_to_hid(end_x), _normalised_to_hid(end_y))
+        client.move_mouse_absolute(*start_hid)
+        time.sleep(0.075)
+        pressed = False
+        try:
+            client.set_mouse_button("left", True)
+            pressed = True
+            time.sleep(0.075)
+            result = client.move_mouse_absolute(*end_hid)
+        finally:
+            if pressed:
+                client.set_mouse_button("left", False)
+        audit(
+            "screen_dragged",
+            {"snapshot_id": screenshot_id, "start_x": round(start_x, 4), "start_y": round(start_y, 4), "end_x": round(end_x, 4), "end_y": round(end_y, 4)},
+            settings.audit_log,
+        )
+        return {"ok": True, "result": result, "start_hid": start_hid, "end_hid": end_hid}
     except Exception as exc:
         return _safe_error(exc)
 
