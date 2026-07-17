@@ -592,14 +592,14 @@ def pikvm_eject_media(control_token: str, confirmation: str) -> dict[str, Any]:
 
 
 @_tool()
-def pikvm_click_screen(
+def pikvm_click_at(
     x: float,
     y: float,
     screenshot_id: str,
     control_token: str,
     confirmation: str,
 ) -> dict[str, Any]:
-    """Click a fresh screenshot at normalized coordinates (0=left/top, 1=right/bottom). Requires an active lease and CONFIRM CLICK."""
+    """Click at normalized coordinates in a fresh screenshot (0=left/top, 1=right/bottom). Requires the current control token and CONFIRM CLICK."""
     try:
         if confirmation != "CONFIRM CLICK":
             raise PermissionError("Confirmation must be exactly: CONFIRM CLICK")
@@ -624,14 +624,14 @@ def pikvm_click_screen(
 
 
 @_tool()
-def pikvm_double_click_screen(
+def pikvm_double_click_at(
     x: float,
     y: float,
     screenshot_id: str,
     control_token: str,
     confirmation: str,
 ) -> dict[str, Any]:
-    """Double-click a fresh screenshot at normalized coordinates in absolute mouse mode. Requires CONFIRM DOUBLE CLICK and a fresh screenshot."""
+    """Double-click at normalized coordinates in a fresh screenshot and absolute mouse mode. Requires CONFIRM DOUBLE CLICK."""
     try:
         if confirmation != "CONFIRM DOUBLE CLICK":
             raise PermissionError("Confirmation must be exactly: CONFIRM DOUBLE CLICK")
@@ -658,7 +658,7 @@ def pikvm_double_click_screen(
 
 
 @_tool()
-def pikvm_move_pointer(
+def pikvm_move_pointer_to(
     x: float,
     y: float,
     screenshot_id: str,
@@ -680,7 +680,7 @@ def pikvm_move_pointer(
 
 
 @_tool()
-def pikvm_drag_screen(
+def pikvm_click_drag(
     start_x: float,
     start_y: float,
     end_x: float,
@@ -689,7 +689,7 @@ def pikvm_drag_screen(
     control_token: str,
     confirmation: str,
 ) -> dict[str, Any]:
-    """Drag from one normalized screenshot position to another in absolute mouse mode. Requires a fresh screenshot, current control token, and CONFIRM DRAG. Always releases the button if movement fails."""
+    """Click-and-drag from one normalized screenshot position to another in absolute mouse mode. Requires a fresh screenshot, current control token, and CONFIRM DRAG. Always releases the button if movement fails."""
     try:
         if confirmation != "CONFIRM DRAG":
             raise PermissionError("Confirmation must be exactly: CONFIRM DRAG")
